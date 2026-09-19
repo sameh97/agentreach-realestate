@@ -1,0 +1,13 @@
+node_modules
+.next
+.git
+.gitignore
+*.log
+.env
+.env.*
+!.env.example
+README.md
+Dockerfile
+.dockerignore
+# Block any ESM postcss config create-next-app may have generated
+postcss.config.mjs
