@@ -9,7 +9,7 @@ Thumbs.db
 # ==========================================
 # Backend (Python/FastAPI/uv)
 # ==========================================
-backend/__pycache__/
+__pycache__/
 backend/*.py[cod]
 backend/*$py.class
 backend/*.so
