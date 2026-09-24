@@ -15,7 +15,7 @@ Graph topology (with retry loops):
                               │
                       [enrich_re_signals]   (real-estate specific signals)
                               │
-                       [verify_emails] ◄──── retry in-place
+                       [verify_emails] ◄──── retry (retry_verify → verify_emails)
                               │
                        [score_leads]
                               │
@@ -100,6 +100,8 @@ def build_graph() -> StateGraph:
     g.add_node("score_leads",      score_leads_node)
     g.add_node("deliver",          deliver_leads_node)
     g.add_node("increment_retry",  increment_retry)
+    g.add_node("retry_enrich",     increment_retry)
+    g.add_node("retry_verify",     increment_retry)
     g.add_node("fail",             fail_node)
 
     # Entry point
@@ -120,16 +122,18 @@ def build_graph() -> StateGraph:
     g.add_conditional_edges(
         "enrich_websites",
         route_after_enrich,
-        {"re_signals": "enrich_re_signals", "retry_enrich": "enrich_websites", "fail": "fail"},
+        {"re_signals": "enrich_re_signals", "retry_enrich": "retry_enrich", "fail": "fail"},
     )
+    g.add_edge("retry_enrich", "enrich_websites")
     g.add_edge("enrich_re_signals", "verify_emails")
 
     # Verify → conditional
     g.add_conditional_edges(
         "verify_emails",
         route_after_verify,
-        {"score": "score_leads", "retry_verify": "verify_emails"},
+        {"score": "score_leads", "retry_verify": "retry_verify"},
     )
+    g.add_edge("retry_verify", "verify_emails")
 
     # Final linear chain
     g.add_edge("score_leads", "deliver")

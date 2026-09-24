@@ -72,8 +72,10 @@ async def _run_job(job_id: str, req: GenerateRequest):
             "messages": [], "raw_query": req.query,
             "business_type": "", "location": "", "radius_km": 25.0,
             "enrichment_reqs": [], "max_results": req.max_results,
+            "specialization_filter": "none", "team_filter": "none",
             "raw_businesses": [], "scrape_errors": [],
             "enriched_leads": [], "enrichment_errors": [],
+            "re_signal_errors": [],
             "verified_leads": [], "verification_errors": [],
             "scored_leads": [], "final_csv_path": "", "final_xlsx_path": "",
             "retry_count": 0, "max_retries": req.max_retries,
@@ -81,70 +83,73 @@ async def _run_job(job_id: str, req: GenerateRequest):
         }
 
         loop = asyncio.get_event_loop()
-        final = None
 
-        # Run synchronous LangGraph in thread pool so we don't block
+        # Run synchronous LangGraph in a worker thread so we don't block the
+        # event loop. Events are pushed as each node finishes, so the SSE
+        # stream reports progress live instead of all at once at the end.
         def _run():
-            return list(lead_graph.stream(initial, config={"configurable": {"thread_id": job_id}}))
+            final = None
+            for chunk in lead_graph.stream(initial, config={"configurable": {"thread_id": job_id}}):
+                for node_name, s in chunk.items():
+                    if node_name == "parse_query":
+                        push("parse_query",
+                             message="Query understood",
+                             business_type=s.get("business_type"),
+                             location=s.get("location"),
+                             radius_km=s.get("radius_km"))
 
-        chunks = await loop.run_in_executor(None, _run)
+                    elif node_name == "scrape_maps":
+                        n = len(s.get("raw_businesses", []))
+                        advisories = s.get("scrape_errors", [])
+                        msg = f"Found {n} businesses on Google Maps"
+                        if advisories:
+                            msg += f" — note: {advisories[0]}"
+                        push("scrape_maps", message=msg, count=n)
 
-        for chunk in chunks:
-            for node_name, s in chunk.items():
-                if node_name == "parse_query":
-                    push("parse_query",
-                         message="Query understood",
-                         business_type=s.get("business_type"),
-                         location=s.get("location"),
-                         radius_km=s.get("radius_km"))
+                    elif node_name == "enrich_websites":
+                        n = len(s.get("enriched_leads", []))
+                        push("enrich_websites", message=f"Enriched {n} businesses with emails", count=n)
 
-                elif node_name == "scrape_maps":
-                    n = len(s.get("raw_businesses", []))
-                    advisories = s.get("scrape_errors", [])
-                    msg = f"Found {n} businesses on Google Maps"
-                    if advisories:
-                        msg += f" — note: {advisories[0]}"
-                    push("scrape_maps", message=msg, count=n)
+                    elif node_name == "enrich_re_signals":
+                        el = s.get("enriched_leads", [])
+                        brokerages = sum(1 for l in el if l.get("team_size") == "brokerage")
+                        push("enrich_re_signals",
+                             message=f"Scanned sites — {brokerages} brokerages detected",
+                             count=len(el), brokerages=brokerages)
 
-                elif node_name == "enrich_websites":
-                    n = len(s.get("enriched_leads", []))
-                    push("enrich_websites", message=f"Enriched {n} businesses with emails", count=n)
+                    elif node_name == "verify_emails":
+                        vl  = s.get("verified_leads", [])
+                        ok  = sum(1 for l in vl if l.get("email_valid"))
+                        push("verify_emails",
+                             message=f"Verified {ok}/{len(vl)} emails as deliverable",
+                             verified=ok, total=len(vl))
 
-                elif node_name == "enrich_re_signals":
-                    el = s.get("enriched_leads", [])
-                    brokerages = sum(1 for l in el if l.get("team_size") == "brokerage")
-                    push("enrich_re_signals",
-                         message=f"Scanned sites — {brokerages} brokerages detected",
-                         count=len(el), brokerages=brokerages)
+                    elif node_name == "score_leads":
+                        sl   = s.get("scored_leads", [])
+                        high = sum(1 for l in sl if l.get("score", 0) >= 70)
+                        push("score_leads",
+                             message=f"Scored {len(sl)} leads — {high} high-quality",
+                             total=len(sl), high_quality=high,
+                             preview=[{k: l.get(k) for k in
+                                       ("name","primary_email","score","team_size","specializations")}
+                                      for l in sl[:5]])
 
-                elif node_name == "verify_emails":
-                    vl  = s.get("verified_leads", [])
-                    ok  = sum(1 for l in vl if l.get("email_valid"))
-                    push("verify_emails",
-                         message=f"Verified {ok}/{len(vl)} emails as deliverable",
-                         verified=ok, total=len(vl))
+                    elif node_name == "deliver":
+                        push("deliver",
+                             message="Files ready for download",
+                             csv_url=f"/api/leads/download/{job_id}?format=csv",
+                             xlsx_url=f"/api/leads/download/{job_id}?format=xlsx")
+                        final = s
 
-                elif node_name == "score_leads":
-                    sl   = s.get("scored_leads", [])
-                    high = sum(1 for l in sl if l.get("score", 0) >= 70)
-                    push("score_leads",
-                         message=f"Scored {len(sl)} leads — {high} high-quality",
-                         total=len(sl), high_quality=high,
-                         preview=[{k: l.get(k) for k in
-                                   ("name","primary_email","score","team_size","specializations")}
-                                  for l in sl[:5]])
+                    elif node_name == "fail":
+                        push("fail", message=s.get("error_message", "Pipeline failed"))
+                        job["status"] = "failed"
+                        return
+            return final
 
-                elif node_name == "deliver":
-                    push("deliver",
-                         message="Files ready for download",
-                         csv_url=f"/api/leads/download/{job_id}?format=csv",
-                         xlsx_url=f"/api/leads/download/{job_id}?format=xlsx")
-                    final = s
-
-                elif node_name == "fail":
-                    push("fail", message=s.get("error_message", "Pipeline failed"))
-                    job["status"] = "failed"
-                    return
+        final = await loop.run_in_executor(None, _run)
+        if job["status"] == "failed":
+            return
 
         if final:
             job["status"]     = "done"
