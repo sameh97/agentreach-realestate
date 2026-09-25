@@ -1,7 +1,7 @@
 'use client'
 
-import { useState, useRef, useCallback } from 'react'
-import { startJob, subscribeToJob, PipelineEvent } from '@/lib/api'
+import { useState, useRef, useCallback, useEffect } from 'react'
+import { startJob, getSearch, subscribeToJob, PipelineEvent } from '@/lib/api'
 import type { Lead } from '@/types/lead'
 
 export type JobStatus = 'idle' | 'queued' | 'running' | 'done' | 'failed'
@@ -24,16 +24,29 @@ const INITIAL_NODES: NodeState[] = [
   { id: 'deliver',          label: 'File Delivery',   icon: '📥', status: 'idle', detail: 'Waiting…' },
 ]
 
-export function useLeadJob() {
-  const [status, setStatus]     = useState<JobStatus>('idle')
-  const [nodes, setNodes]       = useState<NodeState[]>(INITIAL_NODES.map(n => ({ ...n })))
-  const [events, setEvents]     = useState<PipelineEvent[]>([])
-  const [leads, setLeads]       = useState<Lead[]>([])
+/**
+ * Drives the pipeline view for one search at a time — either a new run
+ * (`run`) or a saved search from the user's history (`load`).
+ * `onChange` fires whenever a search starts or finishes, so the history
+ * list can refresh.
+ */
+export function useLeadJob(onChange?: () => void) {
+  const [status, setStatus]       = useState<JobStatus>('idle')
+  const [nodes, setNodes]         = useState<NodeState[]>(INITIAL_NODES.map(n => ({ ...n })))
+  const [events, setEvents]       = useState<PipelineEvent[]>([])
+  const [leads, setLeads]         = useState<Lead[]>([])
   const [leadCount, setLeadCount] = useState(0)
-  const [csvUrl, setCsvUrl]     = useState('')
-  const [xlsxUrl, setXlsxUrl]   = useState('')
+  const [searchId, setSearchId]   = useState<string | null>(null)
+  const [query, setQuery]         = useState('')
+  const [createdAt, setCreatedAt] = useState<string | null>(null)
+  const [error, setError]         = useState('')
 
-  const unsub = useRef<(() => void) | null>(null)
+  const unsub      = useRef<(() => void) | null>(null)
+  const currentId  = useRef<string | null>(null)
+  const onChangeRef = useRef(onChange)
+  onChangeRef.current = onChange
+
+  useEffect(() => () => unsub.current?.(), [])
 
   const advanceNode = useCallback((nodeId: string, detail: string, s: NodeState['status'] = 'done') => {
     setNodes(prev => {
@@ -90,14 +103,11 @@ export function useLeadJob() {
 
       case 'deliver':
         advanceNode('deliver', 'Files ready')
-        if (ev.csv_url)  setCsvUrl(ev.csv_url)
-        if (ev.xlsx_url) setXlsxUrl(ev.xlsx_url)
         break
 
       case 'done':
         setStatus('done')
         setLeadCount(ev.lead_count ?? 0)
-        if (ev.lead_count) setLeadCount(ev.lead_count)
         break
 
       case 'fail':
@@ -112,78 +122,86 @@ export function useLeadJob() {
     }
   }, [advanceNode])
 
-  const run = useCallback(async (query: string) => {
-    if (!query.trim()) return
+  const reset = useCallback((id: string | null) => {
     unsub.current?.()
-
-    // Reset all state
-    setStatus('queued')
+    unsub.current = null
+    currentId.current = id
+    setSearchId(id)
+    setStatus(id ? 'queued' : 'idle')
     setNodes(INITIAL_NODES.map(n => ({ ...n })))
     setEvents([])
     setLeads([])
     setLeadCount(0)
-    setCsvUrl('')
-    setXlsxUrl('')
+    setError('')
+  }, [])
+
+  // The live stream only carries a 5-lead preview — fetch the saved search
+  // once it ends to get every lead and the authoritative final status.
+  const finish = useCallback(async (id: string) => {
+    try {
+      const d = await getSearch(id)
+      if (currentId.current !== id) return
+      setLeads(d.leads)
+      setLeadCount(d.lead_count)
+      setStatus(d.status === 'done' ? 'done' : d.status === 'failed' ? 'failed' : 'running')
+    } catch (err) {
+      console.error('Could not load finished search:', err)
+    }
+    onChangeRef.current?.()
+  }, [])
+
+  const follow = useCallback((id: string) => {
+    unsub.current = subscribeToJob(id, handleEvent, () => finish(id))
+  }, [handleEvent, finish])
+
+  const run = useCallback(async (q: string) => {
+    if (!q.trim()) return
+    reset(null)
+    setStatus('queued')
+    setQuery(q)
+    setCreatedAt(new Date().toISOString())
 
     try {
-      const job = await startJob(query)
-      unsub.current = subscribeToJob(
-        job.job_id,
-        handleEvent,
-        (finalStatus) => setStatus(finalStatus === 'done' ? 'done' : 'failed'),
-      )
+      const job = await startJob(q)
+      currentId.current = job.job_id
+      setSearchId(job.job_id)
+      onChangeRef.current?.()
+      follow(job.job_id)
     } catch (err) {
-      console.error('Job start failed:', err)
-      // Fall through to demo mode
-      runDemo(handleEvent, setStatus, setLeads, setLeadCount)
+      setStatus('idle')
+      setError(err instanceof Error ? err.message : 'Could not start the search')
     }
-  }, [handleEvent])
+  }, [reset, follow])
 
-  return { status, nodes, events, leads, leadCount, csvUrl, xlsxUrl, run }
-}
+  const load = useCallback(async (id: string) => {
+    reset(id)
+    try {
+      const d = await getSearch(id)
+      if (currentId.current !== id) return
+      setQuery(d.query)
+      setCreatedAt(d.created_at)
 
-// ── Demo mode when backend is not reachable ─────────────────────────────────
-
-function runDemo(
-  handleEvent: (ev: PipelineEvent) => void,
-  setStatus: (s: JobStatus) => void,
-  setLeads: (l: Lead[]) => void,
-  setLeadCount: (n: number) => void,
-) {
-  const DEMO: Lead[] = [
-    { name: 'The Sunrise Realty Group',   primary_email: 'team@sunriserealty.com',        email_verified: true,  email_catchall: false, email_status: 'valid',     rating: 4.9, review_count: 214, score: 100, phone: '+1-512-555-0101', address: '2201 S Lamar Blvd, Austin, TX', website: 'sunriserealty.com',      owner_name: '', owner_position: '', category: 'Real estate agency', source: 'demo', team_size: 'brokerage',  specializations: ['luxury', 'relocation'],       years_in_business: 18, license_detected: true,  idx_detected: true,  testimonial_count: 12, service_area_count: 6 },
-    { name: 'Capital City Realtors',      primary_email: 'leads@capitalcityrealtors.com', email_verified: true,  email_catchall: false, email_status: 'valid',     rating: 4.6, review_count: 178, score: 100, phone: '+1-737-555-0034', address: '6301 W Parmer Ln, Austin, TX',   website: 'capitalcityrealtors.com', owner_name: '', owner_position: '', category: 'Real estate agency', source: 'demo', team_size: 'brokerage',  specializations: ['commercial', 'luxury'],       years_in_business: 22, license_detected: true,  idx_detected: true,  testimonial_count: 15, service_area_count: 8 },
-    { name: 'Metro Home Advisors',        primary_email: 'info@metrohomeadvisors.com',    email_verified: true,  email_catchall: false, email_status: 'valid',     rating: 4.6, review_count: 98,  score: 88,  phone: '+1-512-555-0142', address: '4518 N Lamar Blvd, Austin, TX',  website: 'metrohomeadvisors.com', owner_name: '', owner_position: '', category: 'Real estate agency', source: 'demo', team_size: 'large_team', specializations: ['new_construction'],           years_in_business: 9,  license_detected: true,  idx_detected: true,  testimonial_count: 7,  service_area_count: 4 },
-    { name: 'Valley Estates & Land',      primary_email: 'info@valleyestatesland.com',    email_verified: true,  email_catchall: false, email_status: 'valid',     rating: 4.7, review_count: 156, score: 84,  phone: '+1-737-555-0089', address: '2814 Exposition Blvd, Austin, TX', website: 'valleyestatesland.com', owner_name: '', owner_position: '', category: 'Real estate agency', source: 'demo', team_size: 'small_team', specializations: ['land', 'waterfront'],         years_in_business: 14, license_detected: true,  idx_detected: true,  testimonial_count: 9,  service_area_count: 5 },
-    { name: 'James Patel Real Estate',    primary_email: 'james@jamespatelre.com',        email_verified: true,  email_catchall: false, email_status: 'valid',     rating: 4.9, review_count: 312, score: 80,  phone: '+1-512-555-0278', address: '8802 Research Blvd, Austin, TX', website: 'jamespatelre.com',       owner_name: '', owner_position: '', category: 'Real estate agent',  source: 'demo', team_size: 'solo',        specializations: ['luxury'],                     years_in_business: 11, license_detected: true,  idx_detected: true,  testimonial_count: 20, service_area_count: 3 },
-    { name: 'Downtown Living Group',      primary_email: 'hello@downtownliving.com',      email_verified: false, email_catchall: true,  email_status: 'catch-all', rating: 4.1, review_count: 42,  score: 56,  phone: '+1-512-555-0189', address: '1902 E Cesar Chavez, Austin, TX', website: 'downtownliving.com',   owner_name: '', owner_position: '', category: 'Real estate agency', source: 'demo', team_size: 'small_team', specializations: ['new_construction'],           years_in_business: 3,  license_detected: false, idx_detected: true,  testimonial_count: 2,  service_area_count: 2 },
-    { name: 'Maria Chen Realtor',         primary_email: 'maria@mariachenhomes.com',      email_verified: true,  email_catchall: false, email_status: 'valid',     rating: 4.8, review_count: 67,  score: 46,  phone: '+1-512-555-0312', address: '5201 Airport Blvd, Austin, TX',   website: 'mariachenhomes.com',   owner_name: '', owner_position: '', category: 'Real estate agent',  source: 'demo', team_size: 'solo',        specializations: ['first_time_buyer'],           years_in_business: 4,  license_detected: false, idx_detected: false, testimonial_count: 3,  service_area_count: 2 },
-    { name: 'Sunset Ridge Realtors',      primary_email: 'info@sunsetridgerealtors.com',  email_verified: false, email_catchall: false, email_status: 'unknown',   rating: 4.0, review_count: 22,  score: 22,  phone: '',                address: '3344 Oak Springs Dr, Austin, TX', website: 'sunsetridgerealtors.com', owner_name: '', owner_position: '', category: 'Real estate agent', source: 'demo', team_size: 'solo',        specializations: [],                             years_in_business: 2,  license_detected: false, idx_detected: false, testimonial_count: 0,  service_area_count: 1 },
-  ]
-
-  const steps: PipelineEvent[] = [
-    { node: 'start',            ts: now(), message: '[DEMO MODE] Simulating pipeline — connect backend for live data' },
-    { node: 'parse_query',      ts: now(), business_type: 'real estate agent & brokerage', location: 'Austin, TX', radius_km: 25, message: 'Query parsed' },
-    { node: 'scrape_maps',      ts: now(), count: 48, message: 'Scraped 48 agents & brokerages' },
-    { node: 'enrich_websites',  ts: now(), count: 31, message: 'Found emails for 31 businesses' },
-    { node: 'enrich_re_signals', ts: now(), count: 31, brokerages: 2, message: 'Scanned sites — 2 brokerages detected' },
-    { node: 'verify_emails',    ts: now(), verified: 28, total: 31, message: '28/31 emails verified' },
-    { node: 'score_leads',      ts: now(), high_quality: 5, preview: DEMO, message: 'Leads scored' },
-    { node: 'deliver',          ts: now(), csv_url: '#', xlsx_url: '#', message: 'Files ready' },
-    { node: 'done',             ts: now(), lead_count: DEMO.length, message: `${DEMO.length} verified leads ready!` },
-  ]
-
-  const delays = [300, 900, 2200, 3600, 4800, 6000, 6800, 7200, 7600]
-  steps.forEach((ev, i) => {
-    setTimeout(() => {
-      handleEvent(ev)
-      if (ev.node === 'done') {
-        setLeads(DEMO)
-        setLeadCount(DEMO.length)
-        setStatus('done')
+      if (d.status === 'queued' || d.status === 'running') {
+        follow(id)   // the stream replays every event so far, then continues live
+      } else {
+        d.events.forEach(handleEvent)
+        setLeads(d.leads)
+        setLeadCount(d.lead_count)
+        setStatus(d.status)
       }
-    }, delays[i])
-  })
-}
+    } catch (err) {
+      if (currentId.current !== id) return
+      setStatus('idle')
+      setSearchId(null)
+      setError(err instanceof Error ? err.message : 'Could not load this search')
+    }
+  }, [reset, follow, handleEvent])
 
-function now() { return new Date().toISOString() }
+  const clear = useCallback(() => reset(null), [reset])
+
+  return {
+    status, nodes, events, leads, leadCount,
+    searchId, query, createdAt, error,
+    run, load, clear,
+  }
+}

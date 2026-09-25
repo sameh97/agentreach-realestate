@@ -1,5 +1,6 @@
 'use client'
 
+import { useState } from 'react'
 import type { Lead } from '@/types/lead'
 import type { JobStatus } from '@/hooks/useLeadJob'
 import { LeadTable }  from './LeadTable'
@@ -9,12 +10,14 @@ interface Props {
   status:    JobStatus
   leads:     Lead[]
   leadCount: number
-  csvUrl:    string
-  xlsxUrl:   string
   query:     string
+  createdAt: string | null
+  onDownload: (format: 'csv' | 'xlsx') => Promise<void>
 }
 
-export function ResultsPanel({ status, leads, leadCount, csvUrl, xlsxUrl, query }: Props) {
+export function ResultsPanel({ status, leads, leadCount, query, createdAt, onDownload }: Props) {
+  const [downloading, setDownloading] = useState<'csv' | 'xlsx' | null>(null)
+
   const isDone    = status === 'done'
   const isFailed  = status === 'failed'
   const isRunning = status === 'running' || status === 'queued'
@@ -26,7 +29,7 @@ export function ResultsPanel({ status, leads, leadCount, csvUrl, xlsxUrl, query 
     : 'Running pipeline…'
 
   const meta = isDone
-    ? `"${query}" · ${new Date().toLocaleTimeString()}`
+    ? `"${query}" · ${new Date(createdAt ?? Date.now()).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })}`
     : isFailed
     ? 'Check your API keys and try a different query'
     : 'Processing your request…'
@@ -42,26 +45,25 @@ export function ResultsPanel({ status, leads, leadCount, csvUrl, xlsxUrl, query 
           <div className="text-[12px] font-mono text-[var(--muted)] mt-[2px]">{meta}</div>
         </div>
 
-        {isDone && (csvUrl || xlsxUrl) && (
+        {isDone && leadCount > 0 && (
           <div className="flex gap-2">
-            {csvUrl && (
-              <a
-                href={csvUrl}
-                download
-                className="flex items-center gap-1.5 bg-[var(--panel)] border border-[var(--border2)] text-[var(--text)] rounded-lg px-3 py-[7px] text-[13px] font-semibold no-underline hover:border-[var(--accent)] hover:text-[var(--accent)] transition-all"
+            {(['csv', 'xlsx'] as const).map(fmt => (
+              <button
+                key={fmt}
+                disabled={downloading !== null}
+                onClick={async () => {
+                  setDownloading(fmt)
+                  try { await onDownload(fmt) }
+                  catch (err) { alert(err instanceof Error ? err.message : 'Download failed') }
+                  finally { setDownloading(null) }
+                }}
+                className={fmt === 'csv'
+                  ? 'flex items-center gap-1.5 bg-[var(--panel)] border border-[var(--border2)] text-[var(--text)] rounded-lg px-3 py-[7px] text-[13px] font-semibold hover:border-[var(--accent)] hover:text-[var(--accent)] transition-all disabled:opacity-50'
+                  : 'flex items-center gap-1.5 bg-[var(--panel)] border border-[rgba(0,230,118,0.3)] text-[var(--green)] rounded-lg px-3 py-[7px] text-[13px] font-semibold hover:border-[var(--green)] transition-all disabled:opacity-50'}
               >
-                ⬇ CSV
-              </a>
-            )}
-            {xlsxUrl && (
-              <a
-                href={xlsxUrl}
-                download
-                className="flex items-center gap-1.5 bg-[var(--panel)] border border-[rgba(0,230,118,0.3)] text-[var(--green)] rounded-lg px-3 py-[7px] text-[13px] font-semibold no-underline hover:border-[var(--green)] transition-all"
-              >
-                ⬇ XLSX
-              </a>
-            )}
+                {downloading === fmt ? '⏳' : '⬇'} {fmt.toUpperCase()}
+              </button>
+            ))}
           </div>
         )}
       </div>

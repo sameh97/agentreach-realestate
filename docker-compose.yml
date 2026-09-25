@@ -4,8 +4,14 @@
 # AgentReach — Docker Compose
 #
 # Services:
+#   mongo     — MongoDB 7            (127.0.0.1:27017, profile "local-db")
 #   backend   — FastAPI + LangGraph  (port 8000)
 #   frontend  — Next.js 14           (port 3000)
+#
+# Database — local container vs. MongoDB Atlas:
+#   Local (default):  .env has COMPOSE_PROFILES=local-db and no MONGO_URI
+#   Atlas:            .env sets MONGO_URI=mongodb+srv://... and drops
+#                     COMPOSE_PROFILES, so the mongo container never starts
 #
 # Shared volume:
 #   leads_output — CSV/XLSX files written by backend,
@@ -19,6 +25,29 @@
 # ─────────────────────────────────────────────────────────────
 
 services:
+
+  # ── MongoDB (local) ────────────────────────────────────────
+  # Only started when the "local-db" profile is active. Bound to
+  # 127.0.0.1 so it is reachable from your machine (Compass,
+  # `make dev-back`) but never from the internet.
+  mongo:
+    image: mongo:7
+    container_name: agentreach-mongo
+    restart: unless-stopped
+    profiles: ["local-db"]
+    ports:
+      - "127.0.0.1:27017:27017"
+    volumes:
+      - mongo_data:/data/db
+    networks:
+      - agentreach_net
+    healthcheck:
+      test:     ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      interval: 10s
+      timeout:  5s
+      retries:  10
+      start_period: 10s
+
 
   # ── Backend ────────────────────────────────────────────────
   backend:
@@ -44,25 +73,27 @@ services:
 
       RAPIDAPI_KEY:          ${RAPIDAPI_KEY}
       SEARCHAPI_KEY:         ${SEARCHAPI_KEY:-}
-      # Maps scraping
-      OUTSCRAPER_API_KEY:    ${OUTSCRAPER_API_KEY:-}
-      GOOGLE_PLACES_API_KEY: ${GOOGLE_PLACES_API_KEY:-}
 
-      # Email enrichment
-      HUNTER_API_KEY:        ${HUNTER_API_KEY:-}
-      APOLLO_API_KEY:        ${APOLLO_API_KEY:-}
+      # Database — defaults to the local mongo container; set
+      # MONGO_URI in .env to point at MongoDB Atlas instead
+      MONGO_URI:             ${MONGO_URI:-mongodb://mongo:27017}
+      MONGO_DB:              ${MONGO_DB:-agentreach}
 
-      # Email verification
-      ZEROBOUNCE_API_KEY:    ${ZEROBOUNCE_API_KEY:-}
-      NEVER_BOUNCE_API_KEY:  ${NEVER_BOUNCE_API_KEY:-}
+      # Auth — must be set; tokens are signed with it
+      JWT_SECRET:            ${JWT_SECRET:?JWT_SECRET is not set — add it to .env}
+      JWT_TTL_DAYS:          ${JWT_TTL_DAYS:-7}
 
       # App config
       OUTPUT_DIR:            /app/output
-      PORT:                  8000
 
     volumes:
       # Persist exported lead files between restarts
       - leads_output:/app/output
+
+    depends_on:
+      mongo:
+        condition: service_healthy
+        required:  false   # absent when using Atlas
 
     networks:
       - agentreach_net
@@ -112,7 +143,7 @@ services:
       - agentreach_net
 
     healthcheck:
-      test:     ["CMD", "wget", "-qO-", "http://localhost:3000"]
+      test:     ["CMD", "wget", "-qO-", "http://127.0.0.1:3000"]
       interval: 30s
       timeout:  10s
       retries:  3
@@ -134,4 +165,6 @@ networks:
 # ── Named volumes ──────────────────────────────────────────
 volumes:
   leads_output:
+    driver: local
+  mongo_data:
     driver: local
