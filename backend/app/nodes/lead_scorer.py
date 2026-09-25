@@ -18,7 +18,7 @@ Score breakdown (100 pts):
   Social proof (testimonials) ...... 8 pts
   License / compliance detected .... 5 pts
 """
-import os, csv, logging
+import os, io, csv, logging
 from datetime import datetime
 from pathlib import Path
 from app.agents.state import LeadState
@@ -95,59 +95,79 @@ def _flatten_for_export(lead: dict) -> dict:
     return out
 
 
+def leads_to_csv_bytes(scored_leads: list[dict]) -> bytes:
+    leads = [_flatten_for_export(l) for l in scored_leads]
+    buf = io.StringIO()
+    w = csv.DictWriter(buf, fieldnames=COLS, extrasaction="ignore")
+    w.writeheader()
+    w.writerows(leads)
+    return buf.getvalue().encode("utf-8")
+
+
+def leads_to_xlsx_bytes(scored_leads: list[dict]) -> bytes:
+    import openpyxl
+    from openpyxl.styles import Font, PatternFill, Alignment
+    from openpyxl.utils import get_column_letter
+
+    leads = [_flatten_for_export(l) for l in scored_leads]
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Leads"
+
+    hdr_fill = PatternFill("solid", fgColor="0F172A")
+    hdr_font = Font(bold=True, color="FFFFFF", size=10)
+    for ci, col in enumerate(COLS, 1):
+        cell = ws.cell(row=1, column=ci, value=col.replace("_", " ").title())
+        cell.fill = hdr_fill
+        cell.font = hdr_font
+        cell.alignment = Alignment(horizontal="center")
+
+    g = PatternFill("solid", fgColor="DCFCE7")
+    y = PatternFill("solid", fgColor="FEF9C3")
+    r = PatternFill("solid", fgColor="FEE2E2")
+
+    for ri, lead in enumerate(leads, 2):
+        score = lead.get("score", 0)
+        fill = g if score >= 70 else y if score >= 40 else r
+        for ci, col in enumerate(COLS, 1):
+            cell = ws.cell(row=ri, column=ci, value=lead.get(col, ""))
+            cell.fill = fill
+
+    for ci, col in enumerate(COLS, 1):
+        maxw = max(len(col), *(len(str(l.get(col, ""))) for l in leads[:50])) + 2
+        ws.column_dimensions[get_column_letter(ci)].width = min(maxw, 40)
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+
+def export_filename(location: str, created_at: datetime, ext: str) -> str:
+    loc = (location or "leads")[:40].replace(" ", "_").replace(",", "").replace("/", "-")
+    return f"agentreach_{loc}_{created_at.strftime('%Y%m%d_%H%M%S')}.{ext}"
+
+
 def deliver_leads_node(state: LeadState) -> LeadState:
-    leads = [_flatten_for_export(l) for l in state.get("scored_leads", [])]
-    location = state.get("location", "leads")[:40].replace(" ", "_").replace(",", "").replace("/", "-")
-    ts    = datetime.now().strftime("%Y%m%d_%H%M%S")
-    stem  = f"agentreach_{location}_{ts}"
+    leads = state.get("scored_leads", [])
+    now   = datetime.now()
 
     # CSV
-    csv_path = OUTPUT_DIR / f"{stem}.csv"
-    with open(csv_path, "w", newline="", encoding="utf-8") as f:
-        w = csv.DictWriter(f, fieldnames=COLS, extrasaction="ignore")
-        w.writeheader()
-        w.writerows(leads)
+    csv_path = OUTPUT_DIR / export_filename(state.get("location", ""), now, "csv")
+    csv_path.write_bytes(leads_to_csv_bytes(leads))
     logger.info(f"[deliver] CSV → {csv_path}  ({len(leads)} rows)")
 
     # XLSX
     xlsx_path = None
     try:
-        import openpyxl
-        from openpyxl.styles import Font, PatternFill, Alignment
-        from openpyxl.utils import get_column_letter
-
-        wb = openpyxl.Workbook()
-        ws = wb.active
-        ws.title = "Leads"
-
-        hdr_fill = PatternFill("solid", fgColor="0F172A")
-        hdr_font = Font(bold=True, color="FFFFFF", size=10)
-        for ci, col in enumerate(COLS, 1):
-            cell = ws.cell(row=1, column=ci, value=col.replace("_", " ").title())
-            cell.fill = hdr_fill
-            cell.font = hdr_font
-            cell.alignment = Alignment(horizontal="center")
-
-        g = PatternFill("solid", fgColor="DCFCE7")
-        y = PatternFill("solid", fgColor="FEF9C3")
-        r = PatternFill("solid", fgColor="FEE2E2")
-
-        for ri, lead in enumerate(leads, 2):
-            fill = g if lead["score"] >= 70 else y if lead["score"] >= 40 else r
-            for ci, col in enumerate(COLS, 1):
-                cell = ws.cell(row=ri, column=ci, value=lead.get(col, ""))
-                cell.fill = fill
-
-        for ci, col in enumerate(COLS, 1):
-            maxw = max(len(col), *(len(str(l.get(col, ""))) for l in leads[:50])) + 2
-            ws.column_dimensions[get_column_letter(ci)].width = min(maxw, 40)
-
-        xlsx_path = OUTPUT_DIR / f"{stem}.xlsx"
-        wb.save(xlsx_path)
+        xlsx_path = OUTPUT_DIR / export_filename(state.get("location", ""), now, "xlsx")
+        xlsx_path.write_bytes(leads_to_xlsx_bytes(leads))
         logger.info(f"[deliver] XLSX → {xlsx_path}")
     except ImportError:
+        xlsx_path = None
         logger.warning("[deliver] openpyxl not installed, skipping XLSX")
     except Exception as e:
+        xlsx_path = None
         logger.error(f"[deliver] XLSX error: {e}")
 
     return {

@@ -1,4 +1,4 @@
-.PHONY: help build up down logs restart shell-back shell-front clean
+.PHONY: help build up down logs restart shell-back shell-front shell-db db clean clean-all
 
 # Default target
 help:
@@ -14,7 +14,10 @@ help:
 	@echo "  make restart     Rebuild + restart everything"
 	@echo "  make shell-back  Open shell inside backend container"
 	@echo "  make shell-front Open shell inside frontend container"
-	@echo "  make clean       Remove containers, images, and volumes"
+	@echo "  make shell-db    Open mongosh on the local database"
+	@echo "  make db          Start only the local MongoDB (for make dev-back)"
+	@echo "  make clean       Remove containers and images (keeps the database)"
+	@echo "  make clean-all   Remove everything INCLUDING all users and saved searches"
 	@echo ""
 
 build:
@@ -52,11 +55,23 @@ shell-back:
 shell-front:
 	docker compose exec frontend /bin/sh
 
+shell-db:
+	docker compose exec mongo mongosh agentreach
+
 clean:
+	docker compose down --rmi local
+	docker system prune -f
+
+# Deletes the mongo_data volume — every user account and saved search
+clean-all:
 	docker compose down -v --rmi local
 	docker system prune -f
 
 # Dev shortcuts (run without Docker)
+# dev-back needs a database: run `make db` first, or set MONGO_URI to Atlas
+db:
+	docker compose up -d mongo
+
 dev-back:
 	cd backend && uvicorn main:app --reload --port 8000
 
