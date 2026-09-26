@@ -98,7 +98,7 @@ function EmptyState({ status }: { status: JobStatus }) {
       </div>
       <div className="text-[13px]">
         {status === 'failed'
-          ? 'Make sure OPENAI_API_KEY is set in your .env file'
+          ? 'Check the backend logs (make logs-back) for details'
           : 'Results will populate after the enrichment and scoring steps complete'}
       </div>
     </div>

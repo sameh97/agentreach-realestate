@@ -20,9 +20,11 @@ Set LLM_MODEL in your .env using "provider:model" format.
 For Ollama models that contain colons in the name (e.g. qwen2.5:3b),
 use LLM_PROVIDER + LLM_MODEL separately:
 
-  # Simple providers (no colon in model name):
+  # Default — Groq free tier, open-weight model (needs GROQ_API_KEY):
+  LLM_MODEL=groq:openai/gpt-oss-20b
+
+  # Other hosted providers:
   LLM_MODEL=openai:gpt-4o-mini
-  LLM_MODEL=groq:llama-3.1-8b-instant
   LLM_MODEL=anthropic:claude-haiku-3-5
 
   # Ollama (model names often contain colons like qwen2.5:3b):
@@ -46,7 +48,7 @@ logger = logging.getLogger(__name__)
 
 # ── Config ────────────────────────────────────────────────────────────────────
 _LLM_PROVIDER = os.getenv("LLM_PROVIDER", "").strip().lower()
-_LLM_MODEL_ENV = os.getenv("LLM_MODEL", "openai:gpt-4o-mini").strip()
+_LLM_MODEL_ENV = os.getenv("LLM_MODEL", "groq:openai/gpt-oss-20b").strip()
 _OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
 _KNOWN_PROVIDERS = {
     "openai", "anthropic", "google_genai", "google_vertexai",

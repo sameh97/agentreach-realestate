@@ -33,20 +33,17 @@ No unit tests yet. `python3 backend/tests/smoke_test.py` runs an end-to-end test
 get/delete, CSV download) — 21/21 passing at merge `8fce7b2`. Keep real searches
 small: they spend RapidAPI/SearchApi quota.
 
-## Next up — switch the query parser LLM to Groq
-Goal: a free, open-weight model for a deployed demo (no GPU server needed).
-Work on a new branch `feature/groq-llm` off `main`.
+## LLM (query parser)
+The only LLM call is `backend/app/nodes/query_parser.py` (query → location/radius/filters
+JSON). Default: Groq free tier, `LLM_MODEL=groq:openai/gpt-oss-20b` + `GROQ_API_KEY`.
+(`llama-3.1-8b-instant` was avoided — Groq lists it as enterprise-only.) `langchain-groq`
+is pinned to 0.2.1, the last version compatible with `langchain-core==0.3.16`.
+With no/invalid key the parser falls back to a regex parser, so searches still work.
 
-1. Add `langchain-groq` to `backend/requirements.txt` (match the pinned
-   `langchain-core==0.3.x` line).
-2. `.env` / `.env.example`: `LLM_MODEL=groq:llama-3.1-8b-instant`, `GROQ_API_KEY=`;
-   remove `LLM_PROVIDER=ollama`. Keep Ollama documented as the self-hosted option.
-3. `docker-compose.yml`: pass `GROQ_API_KEY` through to the backend.
-4. `query_parser.py` already supports `groq` via `init_chat_model` — verify nothing
-   else needs changing; the regex fallback must still work with no key.
-5. `frontend/src/components/leads/ResultsPanel.tsx` error hint mentions
-   `OPENAI_API_KEY` — make it provider-neutral.
-6. Rebuild, rerun the smoke test, and check backend logs show
-   `provider='groq'`.
-
-The user still needs to create a Groq API key at https://console.groq.com.
+## Next up — free demo deployment
+- Verify the parser end-to-end with a real `GROQ_API_KEY` (backend logs should show
+  no `rule-based fallback` line).
+- Free hosting plan: Atlas M0 (DB), Vercel (frontend), a free Docker host for the
+  backend (Render / Koyeb / HF Spaces). `NEXT_PUBLIC_API_URL` is baked in at frontend
+  build time. Without `RAPIDAPI_KEY` the scraper serves demo data — useful for a
+  public demo that shouldn't burn paid quota.
