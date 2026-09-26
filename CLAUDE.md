@@ -40,6 +40,12 @@ JSON). Default: Groq free tier, `LLM_MODEL=groq:openai/gpt-oss-20b` + `GROQ_API_
 is pinned to 0.2.1, the last version compatible with `langchain-core==0.3.16`.
 With no/invalid key the parser falls back to a regex parser, so searches still work.
 
+## Maps scraping
+`maps_scraper.py`: RapidAPI Local Business Data is primary (emails come back under
+`emails_and_contacts.emails`); per search term it falls back to SearchApi.io on any error.
+A 429 that survives the backoff retry pauses RapidAPI (until `X-RateLimit-Requests-Reset`,
+10 min default, 6 h max) so later terms/searches go straight to SearchApi.
+
 ## Deployment (free tier)
 - Backend → Render (Docker, `render.yaml` blueprint, free plan, Frankfurt).
   Dockerfile honors `$PORT` and `WEB_CONCURRENCY` (default 1 worker).
@@ -50,5 +56,3 @@ With no/invalid key the parser falls back to a regex parser, so searches still w
   enforced after enrichment in `enricher.py`), `DAILY_SEARCH_LIMIT` per user per 24h (429),
   `CORS_ORIGINS` = Vercel URL.
 - Render free sleeps after ~15 min idle; an UptimeRobot ping on `/api/health` keeps it warm.
-- Note: `maps_scraper.py` currently only calls SearchApi.io — the RapidAPI primary
-  search is commented out (since the initial commit).

@@ -11,7 +11,7 @@ interface Props {
 
 export function PipelinePanel({ nodes, events }: Props) {
   return (
-    <div className="bg-[var(--surface)] border border-[var(--border)] rounded-2xl p-5 sticky top-[72px]">
+    <div className="bg-[var(--surface)] border border-[var(--border)] rounded-2xl p-5 md:sticky md:top-[72px]">
       <div className="text-[11px] font-bold tracking-[1.5px] uppercase text-[var(--muted)] mb-4">
         Pipeline Status
       </div>

@@ -49,7 +49,12 @@ function Dashboard() {
 
   const openSearch = useCallback((id: string) => {
     job.load(id)
-    window.scrollTo({ top: 0, behavior: 'smooth' })
+    // Stacked layout (history above results): jump to the results, not the page top
+    if (window.matchMedia('(max-width: 1024px)').matches) {
+      setTimeout(() => document.querySelector('.main-grid')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 150)
+    } else {
+      window.scrollTo({ top: 0, behavior: 'smooth' })
+    }
   }, [job])
 
   const newSearch = useCallback(() => {
@@ -88,7 +93,7 @@ function Dashboard() {
           {job.error && <div className="auth-error mb-5">{job.error}</div>}
 
           {hasJob && (
-            <div className="main-grid">
+            <div className={`main-grid ${job.status === 'done' ? 'results-first' : ''}`}>
               <PipelinePanel nodes={job.nodes} events={job.events} />
               <ResultsPanel
                 status={job.status}
