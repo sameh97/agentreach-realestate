@@ -28,7 +28,7 @@ fine, enricher.py already scrapes each business's website as a free
 fallback for email discovery regardless of which source found the
 business in the first place.
 """
-import os, logging, asyncio
+import os, logging, asyncio, time
 import httpx
 from app.agents.state import LeadState
 
@@ -57,6 +57,13 @@ _DELAY_BETWEEN_REQUESTS_SEC = 1.5
 
 # On a 429, wait this long and retry once before giving up on that term.
 _RATE_LIMIT_BACKOFF_SEC = 3.0
+
+# If RapidAPI is still 429 after that retry (monthly quota gone or throttled),
+# skip it for this long — or until its X-RateLimit-Requests-Reset, if sent —
+# so every search doesn't pay the 429 + backoff before reaching SearchApi.
+_RAPIDAPI_COOLDOWN_SEC     = 600.0
+_RAPIDAPI_MAX_COOLDOWN_SEC = 6 * 3600.0
+_rapidapi_blocked_until    = 0.0
 
 
 async def _search_local_business(query: str, location: str, limit: int, retry_on_429: bool = True) -> list[dict]:
@@ -201,39 +208,47 @@ async def _search_all_terms(location: str, limit: int) -> list[dict]:
     """
     Run each search term one at a time (not concurrently), with a small
     delay between them, so we don't burst past RapidAPI's per-second rate
-    limit. If the primary (RapidAPI) call fails for a term, fall back to
-    SearchApi.io for that same term before giving up on it — a block on
-    one provider no longer drops results entirely.
+    limit. RapidAPI Local Business Data is the primary source; if it fails
+    for a term (error, 429, monthly quota used up) that same term falls back
+    to SearchApi.io, so a block on one provider no longer drops results.
     """
+    global _rapidapi_blocked_until
     per_term_limit = max(20, limit // len(_SEARCH_TERMS))
     merged: list[dict] = []
 
     for i, term in enumerate(_SEARCH_TERMS):
-        if SEARCHAPI_KEY:
+        results = None
+
+        if RAPIDAPI_KEY and time.monotonic() >= _rapidapi_blocked_until:
             try:
-                logger.info(f"[maps_scraper] falling back to SearchApi.io for '{term}'")
-                results = await _search_searchapi_maps(term, location, per_term_limit)
-                merged.extend(results)
-            except Exception as e2:
-                logger.warning(f"[maps_scraper] fallback (SearchApi) also failed for '{term}': {e2}")
-        else:
-            logger.info("[maps_scraper] no SEARCHAPI_KEY set — skipping fallback, term dropped")
+                results = await _search_local_business(term, location, per_term_limit)
+            except Exception as e:
+                logger.warning(f"[maps_scraper] primary (RapidAPI) failed for '{term}': {e}")
+                if isinstance(e, httpx.HTTPStatusError) and e.response.status_code == 429:
+                    # Still 429 after the backoff retry — quota is used up or
+                    # we're throttled. Skip RapidAPI until the window resets so
+                    # later terms and graph retries go straight to the fallback.
+                    try:
+                        cooldown = float(e.response.headers.get("X-RateLimit-Requests-Reset", ""))
+                    except ValueError:
+                        cooldown = _RAPIDAPI_COOLDOWN_SEC
+                    cooldown = min(max(cooldown, 60.0), _RAPIDAPI_MAX_COOLDOWN_SEC)
+                    _rapidapi_blocked_until = time.monotonic() + cooldown
+                    logger.warning(f"[maps_scraper] RapidAPI paused for {cooldown:.0f}s — using SearchApi")
+        elif RAPIDAPI_KEY:
+            logger.info(f"[maps_scraper] RapidAPI paused (rate limited) — skipping primary for '{term}'")
 
-        # try:
-        #     results = await _search_local_business(term, location, per_term_limit)
-        #     merged.extend(results)
-        # except Exception as e:
-        #     logger.warning(f"[maps_scraper] primary (RapidAPI) search term failed: {e}")
+        if results is None:
+            if SEARCHAPI_KEY:
+                try:
+                    logger.info(f"[maps_scraper] falling back to SearchApi.io for '{term}'")
+                    results = await _search_searchapi_maps(term, location, per_term_limit)
+                except Exception as e2:
+                    logger.warning(f"[maps_scraper] fallback (SearchApi) also failed for '{term}': {e2}")
+            else:
+                logger.info("[maps_scraper] no SEARCHAPI_KEY set — skipping fallback, term dropped")
 
-        #     if SEARCHAPI_KEY:
-        #         try:
-        #             logger.info(f"[maps_scraper] falling back to SearchApi.io for '{term}'")
-        #             results = await _search_searchapi_maps(term, location, per_term_limit)
-        #             merged.extend(results)
-        #         except Exception as e2:
-        #             logger.warning(f"[maps_scraper] fallback (SearchApi) also failed for '{term}': {e2}")
-        #     else:
-        #         logger.info("[maps_scraper] no SEARCHAPI_KEY set — skipping fallback, term dropped")
+        merged.extend(results or [])
 
         # Don't sleep after the last term — nothing follows it.
         if i < len(_SEARCH_TERMS) - 1:
@@ -244,7 +259,8 @@ async def _search_all_terms(location: str, limit: int) -> list[dict]:
 
 def _normalize(r: dict) -> dict:
     """Normalize RapidAPI Local Business Data response to our schema."""
-    emails = r.get("emails") or []
+    # extract_emails_and_contacts=true puts them under emails_and_contacts.emails
+    emails = r.get("emails") or (r.get("emails_and_contacts") or {}).get("emails") or []
     primary_email = emails[0] if emails else ""
     category = str((r.get("subtypes") or [None])[0] or r.get("type") or "")
 

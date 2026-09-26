@@ -259,8 +259,15 @@ body::before {
 @keyframes fade-in  { from { opacity: 0; } to { opacity: 1; } }
 @keyframes slide-up { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: translateY(0); } }
 
+/* Grid items default to min-width:auto, so a long event-log line or the lead
+   table would stretch the column past the screen instead of scrolling inside it */
+.main-grid > * { min-width: 0; }
+.main-grid { scroll-margin-top: 84px; } /* clears the sticky header */
+
 @media (max-width: 768px) {
   .main-grid     { grid-template-columns: 1fr; }
+  /* Stacked: once a search is done, the leads matter more than the pipeline log */
+  .main-grid.results-first > :last-child { order: -1; }
   .features-grid { grid-template-columns: 1fr; }
   .pipeline-card { position: static; }
   .hero-stats    { flex-wrap: wrap; gap: 20px; }
