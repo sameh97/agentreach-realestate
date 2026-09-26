@@ -89,7 +89,7 @@ async def _run_job(search_id, req: GenerateRequest):
 
         initial: LeadState = {
             "messages": [], "raw_query": req.query,
-            "business_type": "", "location": "", "radius_km": 25.0,
+            "business_type": "", "location": "", "country_code": "", "radius_km": 25.0,
             "enrichment_reqs": [], "max_results": req.max_results,
             "specialization_filter": "none", "team_filter": "none",
             "raw_businesses": [], "scrape_errors": [],

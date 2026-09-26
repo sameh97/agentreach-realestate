@@ -15,6 +15,7 @@ class LeadState(TypedDict):
     # ── Parsed intent ────────────────────────────────────────
     business_type:    str
     location:         str
+    country_code:     str        # ISO alpha-2, lowercase; "" = unknown
     radius_km:        float
     enrichment_reqs:  list[str]
     max_results:      int

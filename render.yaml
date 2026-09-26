@@ -30,7 +30,7 @@ services:
       - key: MONGO_DB
         value: agentreach
       - key: LLM_MODEL
-        value: groq:openai/gpt-oss-20b
+        value: groq:openai/gpt-oss-120b
       - key: MAX_RESULTS_CAP
         value: "20"
       - key: DAILY_SEARCH_LIMIT
