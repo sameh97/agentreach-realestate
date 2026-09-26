@@ -206,7 +206,8 @@ def parse_query_node(state: LeadState) -> LeadState:
         "location":              str(parsed.get("location", query)),
         "radius_km":             float(parsed.get("radius_km", 25)),
         "enrichment_reqs":       ["email", "specialization", "team_size"],
-        "max_results":           int(parsed.get("max_results", 100)),
+        # The query may ask for fewer ("3 brokerages"), never more than the request allows
+        "max_results":           min(int(parsed.get("max_results", 100)), state.get("max_results", 100)),
         "specialization_filter": str(parsed.get("specialization_filter", "none") or "none").lower(),
         "team_filter":           str(parsed.get("team_filter", "none") or "none").lower(),
         "retry_count":           0,

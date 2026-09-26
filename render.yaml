@@ -1,0 +1,39 @@
+# Render Blueprint — backend API only (frontend is on Vercel, DB on Atlas).
+# Render → New → Blueprint → pick this repo. Keys marked `sync: false`
+# are prompted for on first deploy and never stored in git.
+services:
+  - type: web
+    name: agentreach-api
+    runtime: docker
+    plan: free
+    region: frankfurt
+    branch: main
+    dockerfilePath: ./backend/Dockerfile
+    dockerContext: ./backend
+    healthCheckPath: /api/health
+    envVars:
+      # Secrets — entered in the Render dashboard
+      - key: MONGO_URI
+        sync: false
+      - key: GROQ_API_KEY
+        sync: false
+      - key: RAPIDAPI_KEY
+        sync: false
+      - key: SEARCHAPI_KEY
+        sync: false
+      - key: CORS_ORIGINS        # your Vercel URL, e.g. https://agentreach.vercel.app
+        sync: false
+      - key: JWT_SECRET
+        generateValue: true
+
+      # Config
+      - key: MONGO_DB
+        value: agentreach
+      - key: LLM_MODEL
+        value: groq:openai/gpt-oss-20b
+      - key: MAX_RESULTS_CAP
+        value: "20"
+      - key: DAILY_SEARCH_LIMIT
+        value: "5"
+      - key: OUTPUT_DIR
+        value: /app/output

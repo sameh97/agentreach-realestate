@@ -40,10 +40,15 @@ JSON). Default: Groq free tier, `LLM_MODEL=groq:openai/gpt-oss-20b` + `GROQ_API_
 is pinned to 0.2.1, the last version compatible with `langchain-core==0.3.16`.
 With no/invalid key the parser falls back to a regex parser, so searches still work.
 
-## Next up — free demo deployment
-- Verify the parser end-to-end with a real `GROQ_API_KEY` (backend logs should show
-  no `rule-based fallback` line).
-- Free hosting plan: Atlas M0 (DB), Vercel (frontend), a free Docker host for the
-  backend (Render / Koyeb / HF Spaces). `NEXT_PUBLIC_API_URL` is baked in at frontend
-  build time. Without `RAPIDAPI_KEY` the scraper serves demo data — useful for a
-  public demo that shouldn't burn paid quota.
+## Deployment (free tier)
+- Backend → Render (Docker, `render.yaml` blueprint, free plan, Frankfurt).
+  Dockerfile honors `$PORT` and `WEB_CONCURRENCY` (default 1 worker).
+- Frontend → Vercel, root dir `frontend`, env `NEXT_PUBLIC_API_URL` = Render URL
+  (baked in at build time — redeploy after changing it).
+- DB → MongoDB Atlas M0 (`MONGO_URI`, network access 0.0.0.0/0 since Render IPs are dynamic).
+- Guardrails for the public demo: `MAX_RESULTS_CAP` (request is clamped, not rejected;
+  enforced after enrichment in `enricher.py`), `DAILY_SEARCH_LIMIT` per user per 24h (429),
+  `CORS_ORIGINS` = Vercel URL.
+- Render free sleeps after ~15 min idle; an UptimeRobot ping on `/api/health` keeps it warm.
+- Note: `maps_scraper.py` currently only calls SearchApi.io — the RapidAPI primary
+  search is commented out (since the initial commit).
