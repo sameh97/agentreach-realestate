@@ -84,6 +84,11 @@ services:
       JWT_SECRET:            ${JWT_SECRET:?JWT_SECRET is not set — add it to .env}
       JWT_TTL_DAYS:          ${JWT_TTL_DAYS:-7}
 
+      # Demo guardrails
+      MAX_RESULTS_CAP:       ${MAX_RESULTS_CAP:-500}
+      DAILY_SEARCH_LIMIT:    ${DAILY_SEARCH_LIMIT:-0}
+      CORS_ORIGINS:          ${CORS_ORIGINS:-*}
+
       # App config
       OUTPUT_DIR:            /app/output
 

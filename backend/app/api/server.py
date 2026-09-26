@@ -10,7 +10,7 @@ Leads     → app/api/leads.py         (/api/leads/*)
 Searches  → app/api/searches.py      (/api/searches/*)
 GET /api/health                      → health check
 """
-import logging
+import os, logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -33,7 +33,8 @@ app = FastAPI(title="AgentReach API — Real Estate Lead Finder", version="1.1.0
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],   # tighten in production
+    # Comma-separated, e.g. "https://agentreach.vercel.app". "*" is fine locally.
+    allow_origins=[o.strip() for o in os.getenv("CORS_ORIGINS", "*").split(",") if o.strip()],
     allow_credentials=False,  # auth is a Bearer header, not cookies
     allow_methods=["*"],
     allow_headers=["*"],

@@ -225,4 +225,7 @@ def enrich_websites_node(state: LeadState) -> LeadState:
     with_email = [b for b in enriched if b.get("primary_email")]
 
     logger.info(f"[enricher] {len(with_email)}/{len(enriched)} got email")
+    # Cap here, not at scrape time: businesses without an email are dropped above,
+    # and everything downstream (email verification) costs an API call per lead.
+    with_email = with_email[:state.get("max_results", 100)]
     return {**state, "enriched_leads": with_email, "enrichment_errors": errors}

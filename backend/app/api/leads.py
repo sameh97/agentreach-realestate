@@ -12,7 +12,7 @@ SSE stream reads them back. That keeps `uvicorn --workers N` (or several
 replicas) consistent, and every finished search stays in the user's history.
 """
 import os, json, asyncio, logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from fastapi.responses import Response, StreamingResponse
@@ -30,6 +30,8 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/leads", tags=["leads"])
 
 MAX_RESULTS_CAP = int(os.getenv("MAX_RESULTS_CAP", "500"))
+# Searches per user per rolling 24h — each run spends API quota. 0 = unlimited.
+DAILY_SEARCH_LIMIT = int(os.getenv("DAILY_SEARCH_LIMIT", "0"))
 
 # Fields included in the lead preview sent with the score_leads event
 _PREVIEW_FIELDS = ("name", "primary_email", "score", "team_size", "specializations")
@@ -37,8 +39,13 @@ _PREVIEW_FIELDS = ("name", "primary_email", "score", "team_size", "specializatio
 
 class GenerateRequest(BaseModel):
     query:       str
-    max_results: int = Field(100, ge=1, le=MAX_RESULTS_CAP)
+    max_results: int = Field(100, ge=1)
     max_retries: int = Field(3, ge=0, le=5)
+
+    @field_validator("max_results")
+    @classmethod
+    def _cap(cls, v: int) -> int:
+        return min(v, MAX_RESULTS_CAP)  # clamp, don't reject — the UI doesn't know the cap
 
     @field_validator("query")
     @classmethod
@@ -216,6 +223,14 @@ async def generate(req: GenerateRequest, bg: BackgroundTasks, user: dict = Depen
     }, {"_id": 1})
     if running:
         raise HTTPException(409, "You already have a search running — wait for it to finish")
+
+    if DAILY_SEARCH_LIMIT:
+        recent = await db.searches().count_documents({
+            "user_id":    user["_id"],
+            "created_at": {"$gt": _now() - timedelta(days=1)},
+        })
+        if recent >= DAILY_SEARCH_LIMIT:
+            raise HTTPException(429, f"Daily limit reached ({DAILY_SEARCH_LIMIT} searches per 24 hours) — try again tomorrow")
 
     res = await db.searches().insert_one({
         "user_id":    user["_id"],
