@@ -35,8 +35,10 @@ small: they spend RapidAPI/SearchApi quota.
 
 ## LLM (query parser)
 The only LLM call is `backend/app/nodes/query_parser.py` (query → location/radius/filters
-JSON). Default: Groq free tier, `LLM_MODEL=groq:openai/gpt-oss-20b` + `GROQ_API_KEY`.
-(`llama-3.1-8b-instant` was avoided — Groq lists it as enterprise-only.) `langchain-groq`
+JSON + ISO `country_code`, which sets RapidAPI's `region`). Default: Groq free tier,
+`LLM_MODEL=groq:openai/gpt-oss-120b` + `GROQ_API_KEY`. `gpt-oss-20b` was dropped: it
+misread Hebrew city names (נצרת → "Bnei Brak"); 120b scored 18/18 on a multilingual
+set at the same latency. (`llama-3.1-8b-instant` is enterprise-only on Groq.) `langchain-groq`
 is pinned to 0.2.1, the last version compatible with `langchain-core==0.3.16`.
 With no/invalid key the parser falls back to a regex parser, so searches still work.
 

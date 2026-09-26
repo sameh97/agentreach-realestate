@@ -21,7 +21,9 @@ For Ollama models that contain colons in the name (e.g. qwen2.5:3b),
 use LLM_PROVIDER + LLM_MODEL separately:
 
   # Default — Groq free tier, open-weight model (needs GROQ_API_KEY):
-  LLM_MODEL=groq:openai/gpt-oss-20b
+  LLM_MODEL=groq:openai/gpt-oss-120b
+  (gpt-oss-20b is faster on paper but misreads non-English city names —
+   e.g. Hebrew "נצרת" (Nazareth) came back as "Bnei Brak".)
 
   # Other hosted providers:
   LLM_MODEL=openai:gpt-4o-mini
@@ -48,7 +50,7 @@ logger = logging.getLogger(__name__)
 
 # ── Config ────────────────────────────────────────────────────────────────────
 _LLM_PROVIDER = os.getenv("LLM_PROVIDER", "").strip().lower()
-_LLM_MODEL_ENV = os.getenv("LLM_MODEL", "groq:openai/gpt-oss-20b").strip()
+_LLM_MODEL_ENV = os.getenv("LLM_MODEL", "groq:openai/gpt-oss-120b").strip()
 _OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
 _KNOWN_PROVIDERS = {
     "openai", "anthropic", "google_genai", "google_vertexai",
@@ -90,7 +92,8 @@ finds real estate agents and brokerages (never any other business type).
 Convert the user's query into a JSON object with EXACTLY these keys:
 
 {
-  "location":               "<city + state/country for Google Maps, e.g. 'Austin, TX'>",
+  "location":               "<city + state/country for Google Maps, in English, e.g. 'Austin, TX'>",
+  "country_code":           "<ISO 3166-1 alpha-2 code of that location, lowercase, e.g. 'us', 'il', 'ae'>",
   "radius_km":               <number, default 25, increase to 60-100 for 'area'/'metro'/'region' queries>,
   "max_results":             <integer 20-500, default 100>,
   "specialization_filter":   "<one of: luxury, commercial, new_construction, relocation,
@@ -103,6 +106,11 @@ Rules:
 - Ignore any business type in the query other than real estate agents/brokerages —
   this tool is single-purpose and always searches for real estate agents & brokerages.
 - For tri-state / metro area queries: use the largest city + radius_km 80-100.
+- The query may be in any language (Hebrew, Arabic, Spanish...). Use EXACTLY the
+  place the user named, transliterated/translated to its standard English name
+  ("נצרת" -> "Nazareth, Israel", "الناصرة" -> "Nazareth, Israel"). Never
+  replace it with a different or better-known city. If you don't recognise the
+  place, transliterate it as written rather than guessing.
 - Respond with ONLY valid JSON — no markdown fences, no explanation.
 """
 
@@ -160,12 +168,16 @@ def _rule_based_parse(query: str) -> dict:
         if word in _US_STATES:
             city = " ".join(w.strip(",.") for w in phrase_words[:i]).title()
             location = f"{city}, {word}"
+            country = "us"
             break
     else:
         location = location_phrase
+        country = ""
 
     parsed = {
         "location":              location,
+        # Only a US state code tells us the country offline; "" = let the API default
+        "country_code":          country,
         "radius_km":             25,
         "max_results":           100,
         "specialization_filter": _detect_kw(query, _SPECIALIZATION_KWS),
@@ -173,6 +185,13 @@ def _rule_based_parse(query: str) -> dict:
     }
     logger.info(f"[parse_query] rule-based → {parsed}")
     return parsed
+
+
+def _country_code(v) -> str:
+    v = str(v or "").strip().lower()
+    if v == "uk":
+        v = "gb"  # common non-ISO answer
+    return v if len(v) == 2 and v.isalpha() else ""
 
 
 # ── Node ──────────────────────────────────────────────────────────────────────
@@ -204,6 +223,7 @@ def parse_query_node(state: LeadState) -> LeadState:
         # business_type is intentionally fixed — AgentReach is single-purpose.
         "business_type":         "real estate agent & brokerage",
         "location":              str(parsed.get("location", query)),
+        "country_code":          _country_code(parsed.get("country_code")),
         "radius_km":             float(parsed.get("radius_km", 25)),
         "enrichment_reqs":       ["email", "specialization", "team_size"],
         # The query may ask for fewer ("3 brokerages"), never more than the request allows

@@ -66,7 +66,7 @@ _RAPIDAPI_MAX_COOLDOWN_SEC = 6 * 3600.0
 _rapidapi_blocked_until    = 0.0
 
 
-async def _search_local_business(query: str, location: str, limit: int, retry_on_429: bool = True) -> list[dict]:
+async def _search_local_business(query: str, location: str, limit: int, region: str = "", retry_on_429: bool = True) -> list[dict]:
     """
     RapidAPI Local Business Data — OpenWeb Ninja
     Endpoint: /search
@@ -87,7 +87,6 @@ async def _search_local_business(query: str, location: str, limit: int, retry_on
         "limit":    min(limit, _MAX_LIMIT_PER_CALL),
         "zoom":     "13",
         "language": "en",
-        "region":   "us",
         "extract_emails_and_contacts": "true",
         # NOTE: lat/lng intentionally omitted — hardcoding them to 0,0
         # (Null Island) was actively hurting relevance for every search
@@ -95,6 +94,10 @@ async def _search_local_business(query: str, location: str, limit: int, retry_on
         # the location; omitting lat/lng lets the API fall back to its
         # own region-based default center instead of a wrong pin.
     }
+    # Country of the target location — biases results to it. Omitted when unknown,
+    # and the API falls back to its own default (us).
+    if region:
+        params["region"] = region
 
     async with httpx.AsyncClient(timeout=30) as c:
         r = await c.get(url, params=params, headers=headers)
@@ -204,7 +207,7 @@ def _normalize_searchapi(r: dict) -> dict:
     }
 
 
-async def _search_all_terms(location: str, limit: int) -> list[dict]:
+async def _search_all_terms(location: str, limit: int, region: str = "") -> list[dict]:
     """
     Run each search term one at a time (not concurrently), with a small
     delay between them, so we don't burst past RapidAPI's per-second rate
@@ -221,7 +224,7 @@ async def _search_all_terms(location: str, limit: int) -> list[dict]:
 
         if RAPIDAPI_KEY and time.monotonic() >= _rapidapi_blocked_until:
             try:
-                results = await _search_local_business(term, location, per_term_limit)
+                results = await _search_local_business(term, location, per_term_limit, region)
             except Exception as e:
                 logger.warning(f"[maps_scraper] primary (RapidAPI) failed for '{term}': {e}")
                 if isinstance(e, httpx.HTTPStatusError) and e.response.status_code == 429:
@@ -388,7 +391,7 @@ def scrape_maps_node(state: LeadState) -> LeadState:
 
     try:
         if RAPIDAPI_KEY or SEARCHAPI_KEY:
-            businesses = asyncio.run(_search_all_terms(loc, lim))
+            businesses = asyncio.run(_search_all_terms(loc, lim, state.get("country_code", "")))
         else:
             logger.warning("[maps_scraper] No RAPIDAPI_KEY or SEARCHAPI_KEY — using demo data")
             businesses = _demo_records(loc)
