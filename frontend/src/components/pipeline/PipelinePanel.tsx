@@ -3,6 +3,7 @@
 import type { NodeState } from '@/hooks/useLeadJob'
 import type { PipelineEvent } from '@/lib/api'
 import clsx from 'clsx'
+import { useLocaleInfo, useT, type TKey } from '@/lib/i18n'
 
 interface Props {
   nodes:  NodeState[]
@@ -10,10 +11,12 @@ interface Props {
 }
 
 export function PipelinePanel({ nodes, events }: Props) {
+  const t = useT()
+  const { intl } = useLocaleInfo()
   return (
     <div className="bg-[var(--surface)] border border-[var(--border)] rounded-2xl p-5 md:sticky md:top-[72px]">
       <div className="text-[11px] font-bold tracking-[1.5px] uppercase text-[var(--muted)] mb-4">
-        Pipeline Status
+        {t('pipeline.title')}
       </div>
 
       <div className="flex flex-col">
@@ -43,10 +46,10 @@ export function PipelinePanel({ nodes, events }: Props) {
                 node.status === 'error'  && 'text-[var(--red)]',
                 node.status === 'idle'   && 'text-[var(--muted)]',
               )}>
-                {node.icon} {node.label}
+                {node.icon} {t(`node.${node.id}` as TKey)}
               </div>
               <div className="text-[11px] font-mono text-[var(--muted)] truncate">
-                {node.detail}
+                {t(node.detail.key, node.detail.vars)}
               </div>
             </div>
           </div>
@@ -57,13 +60,13 @@ export function PipelinePanel({ nodes, events }: Props) {
       {events.length > 0 && (
         <div className="mt-4 border-t border-[var(--border)] pt-4">
           <div className="text-[10px] font-bold tracking-[1.5px] uppercase text-[var(--muted)] mb-3">
-            Event Log
+            {t('pipeline.eventLog')}
           </div>
           <div className="flex flex-col gap-[5px] max-h-48 overflow-y-auto">
             {events.filter(e => e.message).slice(-12).map((ev, i) => (
-              <div key={i} className="flex gap-2 text-[10px] font-mono">
+              <div key={i} className="flex gap-2 text-[10px] font-mono" dir="ltr">
                 <span className="text-[var(--border2)] flex-shrink-0">
-                  {new Date(ev.ts).toLocaleTimeString('en-US', { hour12: false })}
+                  {new Date(ev.ts).toLocaleTimeString(intl, { hour12: false })}
                 </span>
                 <span className="text-[var(--accent)] flex-shrink-0 min-w-[80px]">
                   {ev.node}

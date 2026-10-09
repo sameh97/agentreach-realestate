@@ -14,6 +14,18 @@ scores them, and exports CSV.
   not process memory.
 - **Auth** — JWT + bcrypt (`backend/app/auth.py`, routes in `backend/app/api/auth_routes.py`).
 
+## Languages (frontend i18n)
+- English, Hebrew, Arabic. Dictionaries in `frontend/src/lib/i18n/{en,he,ar}.ts`; `en.ts` is
+  the source of keys and the `Dict` type makes the build fail if another language misses one.
+  Adding a language = new dictionary + one entry in `LOCALES` (`lib/i18n/index.ts`).
+- Components use `const t = useT()`; non-React code uses `t()`. `{name}` placeholders;
+  a `<key>_one` variant is used when `n === 1`. Arabic counts are phrased "label: {n}".
+- `dir="rtl"` is set on `<html>` for he/ar (pre-paint script in `app/layout.tsx`, then the
+  store). Use logical CSS (`ms-`/`me-`, `text-start`, `margin-inline-*`), never left/right.
+  Emails/phones get `dir="ltr"`; user-typed text gets `dir="auto"`.
+- The backend speaks English; `translateServerError` in `lib/i18n` maps its known error
+  messages — add a pattern there when adding a new `HTTPException` message.
+
 ## Running
 - `make up` / `make down` / `make logs-back` / `make shell-db` — everything runs in Docker.
 - Backend :8000 (docs at `/docs`), frontend :3000, local mongo on 127.0.0.1:27017.

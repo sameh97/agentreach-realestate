@@ -3,25 +3,28 @@
 import { useState, useRef, useCallback, useEffect } from 'react'
 import { startJob, getSearch, subscribeToJob, PipelineEvent } from '@/lib/api'
 import type { Lead } from '@/types/lead'
+import { t, type TKey } from '@/lib/i18n'
 
 export type JobStatus = 'idle' | 'queued' | 'running' | 'done' | 'failed'
 
 export interface NodeState {
-  id:     string
-  label:  string
+  id:     string          // also the label's translation key: node.<id>
   icon:   string
   status: 'idle' | 'active' | 'done' | 'error'
-  detail: string
+  // Stored as a key + values, not text, so it re-renders when the language changes
+  detail: { key: TKey; vars?: Record<string, string | number> }
 }
 
+const WAITING = { key: 'pipeline.waiting' } as const
+
 const INITIAL_NODES: NodeState[] = [
-  { id: 'parse_query',      label: 'Query Parser',    icon: '🧠', status: 'idle', detail: 'Waiting…' },
-  { id: 'scrape_maps',      label: 'Maps Scraper',    icon: '🗺️',  status: 'idle', detail: 'Waiting…' },
-  { id: 'enrich_websites',  label: 'Email Enricher',  icon: '📧', status: 'idle', detail: 'Waiting…' },
-  { id: 'enrich_re_signals', label: 'Realtor Signals', icon: '🏷️', status: 'idle', detail: 'Waiting…' },
-  { id: 'verify_emails',    label: 'Verifier',        icon: '✅', status: 'idle', detail: 'Waiting…' },
-  { id: 'score_leads',      label: 'Lead Scorer',     icon: '⭐', status: 'idle', detail: 'Waiting…' },
-  { id: 'deliver',          label: 'File Delivery',   icon: '📥', status: 'idle', detail: 'Waiting…' },
+  { id: 'parse_query',       icon: '🧠', status: 'idle', detail: WAITING },
+  { id: 'scrape_maps',       icon: '🗺️', status: 'idle', detail: WAITING },
+  { id: 'enrich_websites',   icon: '📧', status: 'idle', detail: WAITING },
+  { id: 'enrich_re_signals', icon: '🏷️', status: 'idle', detail: WAITING },
+  { id: 'verify_emails',     icon: '✅', status: 'idle', detail: WAITING },
+  { id: 'score_leads',       icon: '⭐', status: 'idle', detail: WAITING },
+  { id: 'deliver',           icon: '📥', status: 'idle', detail: WAITING },
 ]
 
 /**
@@ -48,7 +51,7 @@ export function useLeadJob(onChange?: () => void) {
 
   useEffect(() => () => unsub.current?.(), [])
 
-  const advanceNode = useCallback((nodeId: string, detail: string, s: NodeState['status'] = 'done') => {
+  const advanceNode = useCallback((nodeId: string, detail: NodeState['detail'], s: NodeState['status'] = 'done') => {
     setNodes(prev => {
       const next = prev.map(n => ({ ...n }))
       const idx  = next.findIndex(n => n.id === nodeId)
@@ -77,32 +80,32 @@ export function useLeadJob(onChange?: () => void) {
         break
 
       case 'parse_query':
-        advanceNode('parse_query', `${ev.business_type} · ${ev.location}`)
+        advanceNode('parse_query', { key: 'detail.parsed', vars: { location: ev.location ?? '' } })
         break
 
       case 'scrape_maps':
-        advanceNode('scrape_maps', `${ev.count ?? 0} businesses`)
+        advanceNode('scrape_maps', { key: 'detail.businesses', vars: { n: ev.count ?? 0 } })
         break
 
       case 'enrich_websites':
-        advanceNode('enrich_websites', `${ev.count ?? 0} with email`)
+        advanceNode('enrich_websites', { key: 'detail.withEmail', vars: { n: ev.count ?? 0 } })
         break
 
       case 'enrich_re_signals':
-        advanceNode('enrich_re_signals', `${ev.brokerages ?? 0} brokerages found`)
+        advanceNode('enrich_re_signals', { key: 'detail.brokerages', vars: { n: ev.brokerages ?? 0 } })
         break
 
       case 'verify_emails':
-        advanceNode('verify_emails', `${ev.verified ?? 0}/${ev.total ?? 0} valid`)
+        advanceNode('verify_emails', { key: 'detail.valid', vars: { v: ev.verified ?? 0, t: ev.total ?? 0 } })
         break
 
       case 'score_leads':
-        advanceNode('score_leads', `${ev.high_quality ?? 0} high-quality`)
+        advanceNode('score_leads', { key: 'detail.highQuality', vars: { n: ev.high_quality ?? 0 } })
         if (ev.preview?.length) setLeads(ev.preview as Lead[])
         break
 
       case 'deliver':
-        advanceNode('deliver', 'Files ready')
+        advanceNode('deliver', { key: 'detail.filesReady' })
         break
 
       case 'done':
@@ -115,7 +118,7 @@ export function useLeadJob(onChange?: () => void) {
         setNodes(prev => {
           const n = prev.map(p => ({ ...p }))
           const active = n.find(x => x.status === 'active')
-          if (active) { active.status = 'error'; active.detail = 'Failed' }
+          if (active) { active.status = 'error'; active.detail = { key: 'detail.failed' } }
           return n
         })
         break
@@ -169,7 +172,7 @@ export function useLeadJob(onChange?: () => void) {
       follow(job.job_id)
     } catch (err) {
       setStatus('idle')
-      setError(err instanceof Error ? err.message : 'Could not start the search')
+      setError(err instanceof Error ? err.message : t('err.startFailed'))
     }
   }, [reset, follow])
 
@@ -193,7 +196,7 @@ export function useLeadJob(onChange?: () => void) {
       if (currentId.current !== id) return
       setStatus('idle')
       setSearchId(null)
-      setError(err instanceof Error ? err.message : 'Could not load this search')
+      setError(err instanceof Error ? err.message : t('err.loadFailed'))
     }
   }, [reset, follow, handleEvent])
 

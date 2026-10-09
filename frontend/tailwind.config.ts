@@ -14,8 +14,9 @@ module.exports = {
         muted:   '#6b7c8f',
       },
       fontFamily: {
-        sans: ['Space Grotesk', 'system-ui', 'sans-serif'],
-        mono: ['JetBrains Mono', 'monospace'],
+        // Heebo / Cairo only supply the Hebrew / Arabic glyphs the Latin fonts lack
+        sans: ['Space Grotesk', 'Heebo', 'Cairo', 'system-ui', 'sans-serif'],
+        mono: ['JetBrains Mono', 'Heebo', 'Cairo', 'monospace'],
       },
       animation: {
         'pulse-dot': 'pulse-dot 2s ease-in-out infinite',

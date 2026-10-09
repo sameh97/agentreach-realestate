@@ -13,6 +13,7 @@ import { useLeadJob }    from '@/hooks/useLeadJob'
 import { useSearches }   from '@/hooks/useSearches'
 import { useAuth }       from '@/lib/authStore'
 import { downloadSearch } from '@/lib/api'
+import { useT } from '@/lib/i18n'
 
 // Keeps the open search in the URL (?s=<id>) so a refresh reopens it
 function setUrlSearch(id: string | null) {
@@ -22,12 +23,13 @@ function setUrlSearch(id: string | null) {
 export default function HomePage() {
   const router = useRouter()
   const { status: authStatus, init } = useAuth()
+  const t = useT()
 
   useEffect(() => { init() }, [init])
   useEffect(() => { if (authStatus === 'anon') router.replace('/login') }, [authStatus, router])
 
   if (authStatus !== 'authed') {
-    return <div className="auth-wrap"><div className="history-empty">Loading…</div></div>
+    return <div className="auth-wrap"><div className="history-empty">{t('common.loading')}</div></div>
   }
   return <Dashboard />
 }
