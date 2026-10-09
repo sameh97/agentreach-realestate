@@ -1,4 +1,5 @@
 import type { Lead } from '@/types/lead'
+import { t, translateServerError } from './i18n'
 
 export type { Lead }
 
@@ -90,12 +91,12 @@ export class ApiError extends Error {
 async function errorMessage(res: Response): Promise<string> {
   try {
     const body = await res.json()
-    if (typeof body.detail === 'string') return body.detail
+    if (typeof body.detail === 'string') return translateServerError(body.detail)
     if (Array.isArray(body.detail) && body.detail[0]?.msg) {
-      return String(body.detail[0].msg).replace(/^Value error, /, '')
+      return translateServerError(String(body.detail[0].msg).replace(/^Value error, /, ''))
     }
   } catch { /* not JSON */ }
-  return `Request failed (${res.status})`
+  return t('err.requestFailed', { n: res.status })
 }
 
 export async function apiFetch(path: string, init: RequestInit = {}): Promise<Response> {
@@ -104,7 +105,13 @@ export async function apiFetch(path: string, init: RequestInit = {}): Promise<Re
   if (token) headers.set('Authorization', `Bearer ${token}`)
   if (init.body && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json')
 
-  const res = await fetch(`${API_BASE}${path}`, { ...init, headers })
+  let res: Response
+  try {
+    res = await fetch(`${API_BASE}${path}`, { ...init, headers })
+  } catch {
+    // Network error — e.g. the free backend is still waking up
+    throw new ApiError(0, t('err.network'))
+  }
   if (res.ok) return res
 
   // Expired / invalid session anywhere except the login form itself

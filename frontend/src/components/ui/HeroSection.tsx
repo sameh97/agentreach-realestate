@@ -1,50 +1,45 @@
 'use client'
 
-const STATS = [
-  { val: '2 min',   label: 'avg. delivery time'    },
-  { val: '85%+',    label: 'email find rate'        },
-  { val: '100%',    label: 'verified before export' },
-]
-
-const LOGOS = [
-  'Luxury Agents', 'Brokerages', 'Team Leads', 'New Construction',
-  'Relocation Specialists', 'Commercial', 'Waterfront', 'Solo Agents',
-]
+import { useT } from '@/lib/i18n'
 
 export function HeroSection() {
+  const t = useT()
+  const stats = [1, 2, 3].map(i => ({
+    val:   t(`hero.stat${i}` as 'hero.stat1'),
+    label: t(`hero.stat${i}Label` as 'hero.stat1Label'),
+  }))
+  const tags = t('hero.ticker').split('|')
+
   return (
     <section className="hero">
       {/* Eyebrow */}
       <div className="hero-eyebrow">
         <span className="eyebrow-dot" />
-        Built for vendors selling into real estate
+        {t('hero.eyebrow')}
       </div>
 
       {/* Headline */}
       <h1>
-        Find real estate agents.<br />
-        <span className="hero-gradient">Get verified emails. Sell smarter.</span>
+        {t('hero.title1')}<br />
+        <span className="hero-gradient">{t('hero.title2')}</span>
       </h1>
 
       {/* Sub-headline */}
       <p className="hero-sub">
-        Tell us the city. We find every agent and brokerage on Google Maps,
-        scan their site for team size, specialization, and how established
-        they are, verify their email, and hand you a ranked, ready-to-send
-        spreadsheet — in under 2 minutes.
+        {t('hero.sub')}
       </p>
 
       {/* CTA row */}
       <div className="hero-cta-row">
         <a href="#search" className="btn-hero-primary">
-          Try it free → 20 leads
+          {t('hero.cta')}
         </a>
-        <span className="hero-cta-note">No credit card · Results in 2 min</span>
+        <span className="hero-cta-note">{t('hero.ctaNote')}</span>
       </div>
 
       {/* Stats Section */}
       <div className="hero-stats">
-        {STATS.map(s => (
+        {stats.map(s => (
           <div className="hero-stat" key={s.label}>
             <strong>{s.val}</strong>
             <span>{s.label}</span>
@@ -54,11 +49,11 @@ export function HeroSection() {
 
       {/* Concept Update: Infinite Marquee Ticker */}
       <div className="hero-ticker-wrap">
-        <div className="hero-ticker-label">Every lead is tagged with signals like:</div>
+        <div className="hero-ticker-label">{t('hero.tickerLabel')}</div>
         <div className="marquee-container">
           <div className="marquee-content">
             {/* We double the array to ensure seamless looping */}
-            {[...LOGOS, ...LOGOS].map((l, i) => (
+            {[...tags, ...tags].map((l, i) => (
               <div key={i} className="ticker-item">
                 <span className="ticker-bullet">•</span>
                 {l}

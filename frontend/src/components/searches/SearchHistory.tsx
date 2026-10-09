@@ -3,6 +3,7 @@
 import { useMemo, useState } from 'react'
 import clsx from 'clsx'
 import type { SearchSummary } from '@/lib/api'
+import { useLocaleInfo, useT, type TKey } from '@/lib/i18n'
 
 interface Props {
   searches: SearchSummary[]
@@ -19,28 +20,31 @@ function startOfDay(d: Date) {
   return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime()
 }
 
-function groupLabel(iso: string): string {
+function groupKey(iso: string): TKey {
   const days = Math.round((startOfDay(new Date()) - startOfDay(new Date(iso))) / 86_400_000)
-  if (days <= 0) return 'Today'
-  if (days === 1) return 'Yesterday'
-  if (days < 7)  return 'This week'
-  if (days < 30) return 'This month'
-  return 'Older'
+  if (days <= 0) return 'history.today'
+  if (days === 1) return 'history.yesterday'
+  if (days < 7)  return 'history.thisWeek'
+  if (days < 30) return 'history.thisMonth'
+  return 'history.older'
 }
 
-function timeAgo(iso: string): string {
+// Intl handles each language's grammar ("5m ago", "לפני 5 דק׳", "قبل 5 د")
+function timeAgo(iso: string, intl: string, justNow: string): string {
   const s = Math.max(0, (Date.now() - new Date(iso).getTime()) / 1000)
-  if (s < 60)     return 'just now'
-  if (s < 3600)   return `${Math.floor(s / 60)}m ago`
-  if (s < 86400)  return `${Math.floor(s / 3600)}h ago`
-  if (s < 604800) return `${Math.floor(s / 86400)}d ago`
-  return new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+  const rtf = new Intl.RelativeTimeFormat(intl, { style: 'narrow' })
+  if (s < 60)     return justNow
+  if (s < 3600)   return rtf.format(-Math.floor(s / 60), 'minute')
+  if (s < 86400)  return rtf.format(-Math.floor(s / 3600), 'hour')
+  if (s < 604800) return rtf.format(-Math.floor(s / 86400), 'day')
+  return new Date(iso).toLocaleDateString(intl, { month: 'short', day: 'numeric' })
 }
 
 // ── Component ────────────────────────────────────────────────────────────────
 
 export function SearchHistory({ searches, loaded, activeId, onSelect, onDelete, onNew }: Props) {
   const [filter, setFilter] = useState('')
+  const t = useT()
 
   const groups = useMemo(() => {
     const f = filter.trim().toLowerCase()
@@ -48,9 +52,9 @@ export function SearchHistory({ searches, loaded, activeId, onSelect, onDelete, 
       ? searches.filter(s => s.query.toLowerCase().includes(f) || s.location.toLowerCase().includes(f))
       : searches
 
-    const out: { label: string; items: SearchSummary[] }[] = []
+    const out: { label: TKey; items: SearchSummary[] }[] = []
     for (const s of visible) {
-      const label = groupLabel(s.created_at)
+      const label = groupKey(s.created_at)
       const last  = out[out.length - 1]
       if (last?.label === label) last.items.push(s)
       else out.push({ label, items: [s] })
@@ -64,12 +68,12 @@ export function SearchHistory({ searches, loaded, activeId, onSelect, onDelete, 
     <aside className="history-card">
       <div className="history-head">
         <div>
-          <div className="card-label !mb-1">Your searches</div>
+          <div className="card-label !mb-1">{t('history.title')}</div>
           <div className="history-stats">
-            {searches.length} searches · {totalLeads.toLocaleString()} leads
+            {t('history.stats', { n: searches.length, leads: totalLeads.toLocaleString() })}
           </div>
         </div>
-        <button className="history-new" onClick={onNew} title="Start a new search">+ New</button>
+        <button className="history-new" onClick={onNew} title={t('history.newTitle')}>{t('history.new')}</button>
       </div>
 
       {searches.length > 5 && (
@@ -77,27 +81,28 @@ export function SearchHistory({ searches, loaded, activeId, onSelect, onDelete, 
           className="history-filter"
           value={filter}
           onChange={e => setFilter(e.target.value)}
-          placeholder="Filter searches…"
+          placeholder={t('history.filter')}
+          dir="auto"
         />
       )}
 
       <div className="history-list">
-        {!loaded && <div className="history-empty">Loading…</div>}
+        {!loaded && <div className="history-empty">{t('common.loading')}</div>}
 
         {loaded && searches.length === 0 && (
           <div className="history-empty">
             <div className="text-[28px] opacity-30 mb-2">🗂️</div>
-            No searches yet.<br />Run one and it will be saved here.
+            {t('history.empty1')}<br />{t('history.empty2')}
           </div>
         )}
 
         {loaded && searches.length > 0 && groups.length === 0 && (
-          <div className="history-empty">No searches match “{filter}”.</div>
+          <div className="history-empty">{t('history.noMatch', { q: filter })}</div>
         )}
 
         {groups.map(g => (
           <div key={g.label}>
-            <div className="history-group">{g.label}</div>
+            <div className="history-group">{t(g.label)}</div>
             {g.items.map(s => (
               <HistoryItem
                 key={s.id}
@@ -105,7 +110,7 @@ export function SearchHistory({ searches, loaded, activeId, onSelect, onDelete, 
                 active={s.id === activeId}
                 onSelect={() => onSelect(s.id)}
                 onDelete={() => {
-                  if (confirm(`Delete the search “${s.query}”? This can't be undone.`)) onDelete(s.id)
+                  if (confirm(t('history.confirmDelete', { q: s.query }))) onDelete(s.id)
                 }}
               />
             ))}
@@ -123,6 +128,8 @@ function HistoryItem({ search: s, active, onSelect, onDelete }: {
   onDelete: () => void
 }) {
   const running = s.status === 'queued' || s.status === 'running'
+  const t = useT()
+  const { intl } = useLocaleInfo()
 
   return (
     <div
@@ -134,11 +141,11 @@ function HistoryItem({ search: s, active, onSelect, onDelete }: {
     >
       <div className="history-item-top">
         <span className={clsx('history-dot', s.status)} />
-        <span className="history-query">{s.query}</span>
+        <span className="history-query" dir="auto">{s.query}</span>
         <button
           className="history-delete"
-          title="Delete search"
-          aria-label="Delete search"
+          title={t('history.delete')}
+          aria-label={t('history.delete')}
           onClick={e => { e.stopPropagation(); onDelete() }}
         >
           ✕
@@ -147,17 +154,17 @@ function HistoryItem({ search: s, active, onSelect, onDelete }: {
 
       <div className="history-meta">
         {s.location && <span className="truncate">📍 {s.location}</span>}
-        <span className="ml-auto shrink-0">{timeAgo(s.created_at)}</span>
+        <span className="ms-auto shrink-0">{timeAgo(s.created_at, intl, t('history.justNow'))}</span>
       </div>
 
       <div className="history-badges">
-        {running && <span className="history-badge running">Running…</span>}
-        {s.status === 'failed' && <span className="history-badge failed">Failed</span>}
+        {running && <span className="history-badge running">{t('history.running')}</span>}
+        {s.status === 'failed' && <span className="history-badge failed">{t('history.failed')}</span>}
         {s.status === 'done' && (
           <>
-            <span className="history-badge">{s.lead_count} leads</span>
+            <span className="history-badge">{t('history.leads', { n: s.lead_count })}</span>
             {s.high_quality_count > 0 && (
-              <span className="history-badge high">{s.high_quality_count} high-quality</span>
+              <span className="history-badge high">{t('history.high', { n: s.high_quality_count })}</span>
             )}
           </>
         )}

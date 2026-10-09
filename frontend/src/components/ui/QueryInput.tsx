@@ -1,12 +1,6 @@
 'use client'
 
-const EXAMPLES = [
-  'Real estate agents in Austin TX',
-  'Luxury realtors in Miami FL',
-  'Brokerages in Denver CO',
-  'Real estate teams in Scottsdale AZ',
-  'Commercial agents in Chicago IL',
-]
+import { useT } from '@/lib/i18n'
 
 interface Props {
   value:    string
@@ -16,29 +10,31 @@ interface Props {
 }
 
 export function QueryInput({ value, onChange, onSubmit, loading }: Props) {
+  const t = useT()
   return (
     <div id="search" className="query-card">
-      <div className="query-label">Where are you targeting? (Real estate agents &amp; brokerages)</div>
+      <div className="query-label">{t('query.label')}</div>
       <div className="query-row">
         <input
           type="text"
           className="query-input"
+          dir="auto"
           value={value}
           onChange={e => onChange(e.target.value)}
           onKeyDown={e => e.key === 'Enter' && !loading && onSubmit()}
-          placeholder='e.g. "Luxury real estate agents in Miami FL"'
+          placeholder={t('query.placeholder')}
         />
         <button
           className="btn-generate"
           onClick={onSubmit}
           disabled={loading || !value.trim()}
         >
-          {loading ? '⏳ Finding leads…' : '🔍 Find Leads'}
+          {loading ? t('query.finding') : t('query.find')}
         </button>
       </div>
       <div className="example-chips">
-        <span className="example-chip-label">Try:</span>
-        {EXAMPLES.map(ex => (
+        <span className="example-chip-label">{t('query.try')}</span>
+        {t('query.examples').split('|').map(ex => (
           <button key={ex} className="example-chip" onClick={() => onChange(ex)}>
             {ex}
           </button>
