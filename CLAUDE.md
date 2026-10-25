@@ -59,6 +59,18 @@ With no/invalid key the parser falls back to a regex parser, so searches still w
 `emails_and_contacts.emails`); per search term it falls back to SearchApi.io on any error.
 A 429 that survives the backoff retry pauses RapidAPI (until `X-RateLimit-Requests-Reset`,
 10 min default, 6 h max) so later terms/searches go straight to SearchApi.
+Quota (free plans): RapidAPI counts **businesses returned** — 500/month (header
+`x-ratelimit-businesses-remaining`), not the 500k requests. SearchApi has one-time credits
+(1 per term, ~20 results). Don't probe with large `limit`s.
+
+## Enrichment (`enricher.py`)
+- A lead is kept if it has an email **or** phone **or** WhatsApp (most Israeli agents publish
+  no email). Sort is email → WhatsApp → phone before the `max_results` cap.
+- Site scrape: browser UA, http→https retry, follows same-site contact/about links
+  (en/he/ar hints), collects `mailto:` + text emails and `wa.me` numbers (normalized to
+  international via `_CALLING_CODES` + `country_code`). Email choice prefers the city in the
+  prefix / the page Maps linked (franchise branch pages) and penalizes billing/jobs/etc.
+- Scorer reachability (25 pts) = max(email pts, WhatsApp 10, phone 5).
 
 ## Deployment (free tier)
 - Backend → Render (Docker, `render.yaml` blueprint, free plan, Frankfurt).

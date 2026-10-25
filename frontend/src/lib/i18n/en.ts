@@ -84,8 +84,8 @@ export const en = {
   'history.leads_one':     '1 lead',
   'history.high':          '{n} high-quality',
 
-  'results.titleDone':     '{n} Verified Leads',
-  'results.titleDone_one': '1 Verified Lead',
+  'results.titleDone':     '{n} Leads',
+  'results.titleDone_one': '1 Lead',
   'results.titleFailed':   'Search Failed',
   'results.titleRunning':  'Running pipeline…',
   'results.metaFailed':    'Try a different query, or try again later',
@@ -106,6 +106,7 @@ export const en = {
   'table.years':  'Years',
   'table.phone':  'Phone',
   'table.yearsShort': '{n}y',
+  'table.whatsapp':   'Open WhatsApp chat',
 
   'verify.valid':    '✓ valid',
   'verify.catchall': '~ catch-all',
@@ -155,7 +156,7 @@ export const en = {
   'node.deliver':           'File Delivery',
   'detail.parsed':      '📍 {location}',
   'detail.businesses':  '{n} businesses',
-  'detail.withEmail':   '{n} with email',
+  'detail.reachable':   '{n} leads · {e} with email',
   'detail.brokerages':  '{n} brokerages found',
   'detail.valid':       '{v}/{t} valid',
   'detail.highQuality': '{n} high-quality',

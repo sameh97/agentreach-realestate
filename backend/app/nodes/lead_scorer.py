@@ -13,7 +13,7 @@ Score breakdown (100 pts):
   Team / brokerage size ............ 22 pts  (bigger org = bigger deal size)
   Established (years in business) .. 15 pts
   Digital maturity (IDX + site) .... 15 pts  (active, maintained business)
-  Email deliverability ............. 25 pts  (can you actually reach them)
+  Reachability ..................... 25 pts  (verified email > catch-all > WhatsApp > phone)
   Specialization clarity ........... 10 pts  (real, positioned practice)
   Social proof (testimonials) ...... 8 pts
   License / compliance detected .... 5 pts
@@ -31,7 +31,7 @@ COLS = [
     "score", "name", "primary_email", "email_verified", "email_catchall",
     "email_status", "team_size", "specializations", "years_in_business",
     "license_detected", "idx_detected", "testimonial_count",
-    "service_area_count", "phone", "website", "address",
+    "service_area_count", "phone", "whatsapp", "website", "address",
     "rating", "review_count", "category", "source",
 ]
 
@@ -55,10 +55,13 @@ def _score(lead: dict) -> int:
     if lead.get("website"):        s += 3
     if lead.get("recent_activity"): s += 2
 
-    # Email deliverability (25 pts) — can you actually reach them
-    if lead.get("email_verified"):    s += 25
-    elif lead.get("email_catchall"):  s += 15
-    elif lead.get("email_valid"):     s += 8
+    # Reachability (25 pts) — can you actually reach them. A deliverable email
+    # wins; WhatsApp/phone-only leads still count, just for less.
+    email_pts = (25 if lead.get("email_verified") else
+                 15 if lead.get("email_catchall") else
+                 8  if lead.get("email_valid") else 0)
+    contact_pts = 10 if lead.get("whatsapp") else 5 if lead.get("phone") else 0
+    s += max(email_pts, contact_pts)
 
     # Specialization clarity (10 pts) — a positioned practice, not a placeholder
     specs = lead.get("specializations") or []
@@ -101,7 +104,9 @@ def leads_to_csv_bytes(scored_leads: list[dict]) -> bytes:
     w = csv.DictWriter(buf, fieldnames=COLS, extrasaction="ignore")
     w.writeheader()
     w.writerows(leads)
-    return buf.getvalue().encode("utf-8")
+    # utf-8-sig adds a BOM — without it Excel opens the file as ANSI and shows
+    # Hebrew/Arabic names as gibberish.
+    return buf.getvalue().encode("utf-8-sig")
 
 
 def leads_to_xlsx_bytes(scored_leads: list[dict]) -> bytes:

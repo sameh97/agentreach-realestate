@@ -7,6 +7,7 @@ export interface Lead {
   owner_name:     string
   owner_position: string
   phone:          string
+  whatsapp?:      string  // international digits, from a wa.me link on their site
   website:        string
   address:        string
   rating:         number

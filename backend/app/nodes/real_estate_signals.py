@@ -38,7 +38,9 @@ from app.agents.state import LeadState
 
 logger = logging.getLogger(__name__)
 
-UA = "Mozilla/5.0 (compatible; AgentReachBot/1.0)"
+# A bot-looking UA gets 403s from many small-business hosts and WAFs.
+UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+      "(KHTML, like Gecko) Chrome/124.0 Safari/537.36")
 _THIS_YEAR = datetime.now().year
 
 # ── Keyword tables ──────────────────────────────────────────────────────────

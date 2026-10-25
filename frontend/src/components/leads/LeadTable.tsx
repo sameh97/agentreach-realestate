@@ -179,6 +179,18 @@ export function LeadTable({ leads }: Props) {
                 <span className="font-mono text-[11px] text-[var(--muted)] whitespace-nowrap" dir="ltr">
                   {lead.phone || '—'}
                 </span>
+                {lead.whatsapp && (
+                  <a
+                    href={`https://wa.me/${lead.whatsapp}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    title={t('table.whatsapp')}
+                    className="block mt-[2px] text-[10px] font-semibold text-[#25d366] hover:underline"
+                    dir="ltr"
+                  >
+                    WhatsApp ↗
+                  </a>
+                )}
               </td>
             </tr>
           ))}

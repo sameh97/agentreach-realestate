@@ -83,8 +83,8 @@ export const he: Dict = {
   'history.leads_one':     'ליד אחד',
   'history.high':          '{n} איכותיים',
 
-  'results.titleDone':     '{n} לידים מאומתים',
-  'results.titleDone_one': 'ליד מאומת אחד',
+  'results.titleDone':     '{n} לידים',
+  'results.titleDone_one': 'ליד אחד',
   'results.titleFailed':   'החיפוש נכשל',
   'results.titleRunning':  'מעבד את החיפוש…',
   'results.metaFailed':    'נסו שאילתה אחרת, או נסו שוב מאוחר יותר',
@@ -105,6 +105,7 @@ export const he: Dict = {
   'table.years':  'ותק',
   'table.phone':  'טלפון',
   'table.yearsShort': '{n} שנים',
+  'table.whatsapp':   'פתיחת צ׳אט בוואטסאפ',
 
   'verify.valid':    '✓ תקין',
   'verify.catchall': '~ מקבל הכול',
@@ -154,7 +155,7 @@ export const he: Dict = {
   'node.deliver':           'הכנת קבצים',
   'detail.parsed':      '📍 {location}',
   'detail.businesses':  '{n} עסקים',
-  'detail.withEmail':   '{n} עם מייל',
+  'detail.reachable':   '{n} לידים · {e} עם מייל',
   'detail.brokerages':  '{n} משרדי תיווך',
   'detail.valid':       '{v}/{t} תקינים',
   'detail.highQuality': '{n} איכותיים',
