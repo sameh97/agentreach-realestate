@@ -195,7 +195,7 @@ async def _run_all(leads: list[dict]) -> tuple[list[dict], list[str]]:
 
 def verify_emails_node(state: LeadState) -> LeadState:
     leads = state.get("enriched_leads", [])
-    logger.info(f"[verifier] Verifying {len(leads)} emails via Verify Email Pro")
+    logger.info(f"[verifier] Verifying {sum(1 for l in leads if l.get('primary_email'))} emails via Verify Email Pro")
 
     # asyncio.run is used here assuming this is a synchronous entry point
     verified, errors = asyncio.run(_run_all(leads))

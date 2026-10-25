@@ -88,7 +88,7 @@ export function useLeadJob(onChange?: () => void) {
         break
 
       case 'enrich_websites':
-        advanceNode('enrich_websites', { key: 'detail.withEmail', vars: { n: ev.count ?? 0 } })
+        advanceNode('enrich_websites', { key: 'detail.reachable', vars: { n: ev.count ?? 0, e: ev.with_email ?? 0 } })
         break
 
       case 'enrich_re_signals':

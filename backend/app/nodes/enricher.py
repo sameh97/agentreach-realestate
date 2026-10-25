@@ -3,11 +3,16 @@ Node 3 — Email Enricher
 ========================
 Waterfall (free → free → paid):
   1. Check if RapidAPI Local Business Data already returned an email (free, already done)
-  2. Website scrape (BeautifulSoup, completely free)
+  2. Website scrape (BeautifulSoup, completely free) — also collects WhatsApp links
   3. RapidAPI Email Finder (rapidapi.com/theCele/api/email-finder7)
+
+A lead is kept if it can be reached at all — email, phone or WhatsApp. Many
+agents (especially in Israel) list no email anywhere but answer WhatsApp, and
+dropping them threw away ~80% of what Maps returned. Email leads sort first,
+so the result cap never cuts one in favour of a phone-only lead.
 """
 import os, re, logging, asyncio
-from urllib.parse import urljoin, urlparse
+from urllib.parse import urljoin, urlparse, unquote
 import httpx
 from bs4 import BeautifulSoup
 from app.agents.state import LeadState
@@ -19,7 +24,32 @@ EMAIL_RE = re.compile(r"[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,24}")
 DECISION_KWS  = {"owner", "ceo", "founder", "president", "director", "manager"}
 GENERIC_PFX   = {"info", "contact", "hello", "support", "admin", "noreply",
                   "no-reply", "sales", "office", "team", "enquiries"}
-UA = "Mozilla/5.0 (compatible; LeadBot/1.0)"
+# Mailboxes that exist on the site but aren't where a sales pitch gets read.
+NON_SALES_PFX = {"billing", "invoice", "invoices", "accounting", "jobs", "careers",
+                 "hr", "privacy", "legal", "webmaster", "postmaster", "abuse"}
+# A bot-looking UA gets 403s from many small-business hosts and WAFs.
+UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+      "(KHTML, like Gecko) Chrome/124.0 Safari/537.36")
+
+# Link href/text fragments (en/he/ar) that point at a page likely to list
+# contact details. Contact pages are tried before about pages.
+_CONTACT_HINTS = ("contact", "צור-קשר", "צור קשר", "קשר", "اتصل", "تواصل")
+_ABOUT_HINTS   = ("about", "אודות", "من نحن")
+_MAX_EXTRA_PAGES = 3
+
+# Listing portals / social profiles: not the business's own site, and they
+# never expose an email — scraping them only costs time.
+_NO_SCRAPE_HOSTS = ("facebook.com", "instagram.com", "linkedin.com", "tiktok.com",
+                    "yad2.co.il", "madlan.co.il")
+# Addresses that show up in page source but don't belong to the business
+# (error trackers, site builders, template placeholders).
+_JUNK_EMAIL_DOMAINS = ("sentry.io", "wixpress.com", "example.com", "domain.com",
+                       "email.com", "yourdomain.com")
+
+# Country → calling code, to turn a local "05x..." WhatsApp number into the
+# international form wa.me needs. Unlisted countries keep the number as found.
+_CALLING_CODES = {"il": "972", "us": "1", "ca": "1", "gb": "44", "ae": "971",
+                  "jo": "962", "sa": "966", "eg": "20", "ps": "970"}
 
 # Common real TLDs — used to sanity-check / trim regex matches. Without a
 # space between adjacent HTML elements, "info@site.com" followed directly
@@ -67,43 +97,121 @@ def _clean_email(raw: str) -> str | None:
 
 
 # ── Layer 1: already in RapidAPI response ─────────────────────────────────────
-# (handled in maps_scraper — if primary_email already set, we skip enrichment)
+# (handled in maps_scraper — if primary_email is already set it's kept; the
+#  site scrape below then only adds a WhatsApp number)
 
 
 # ── Layer 2: website scrape ───────────────────────────────────────────────────
 
-async def _scrape_site(url: str) -> list[str]:
+def _whatsapp_number(href: str) -> str:
+    """Digits of the number in a wa.me / api.whatsapp.com link, or ''."""
+    h = unquote(href).lower()
+    if "wa.me/" in h:
+        digits = re.sub(r"\D", "", h.split("wa.me/", 1)[1].split("?")[0])
+    elif "whatsapp" in h and "phone=" in h:
+        digits = re.sub(r"\D", "", h.split("phone=", 1)[1].split("&")[0])
+    else:
+        return ""
+    return digits if 8 <= len(digits) <= 15 else ""
+
+
+def _add_email(found: dict, raw: str, landing: bool, mailto: bool) -> None:
+    email = _clean_email(raw)
+    if not email or email.endswith((".png", ".jpg", ".css")):
+        return
+    if email.split("@")[1].endswith(_JUNK_EMAIL_DOMAINS):
+        return
+    seen = found.setdefault(email, {"landing": False, "mailto": False})
+    seen["landing"] |= landing
+    seen["mailto"]  |= mailto
+
+
+def _collect(soup: BeautifulSoup, out: dict, landing: bool) -> None:
+    for a in soup.find_all("a", href=True):
+        href = a["href"].strip()
+        if href.lower().startswith("mailto:"):
+            _add_email(out["emails"], unquote(href[7:]).split("?")[0], landing, mailto=True)
+        else:
+            n = _whatsapp_number(href)
+            if n and n not in out["whatsapp"]:
+                out["whatsapp"].append(n)
+    # separator=" " is critical: without it, BeautifulSoup joins
+    # text from adjacent elements with NO space (e.g. a phone
+    # number span right before an email span), so the email
+    # regex below would otherwise capture "2105551234info@x.com"
+    # or "info@x.comVisitOurOffice" as one glued string.
+    for m in EMAIL_RE.finditer(soup.get_text(separator=" ")):
+        _add_email(out["emails"], m.group(), landing, mailto=False)
+
+
+def _host(url: str) -> str:
+    return urlparse(url).netloc.lower().removeprefix("www.")
+
+
+def _contact_links(soup: BeautifulSoup, base: str) -> list[str]:
+    """Same-site links that look like contact pages, then about pages."""
+    contact, about = [], []
+    for a in soup.find_all("a", href=True):
+        href = a["href"].strip()
+        if href.startswith(("mailto:", "tel:", "#", "javascript:")):
+            continue
+        # unquote: sites link the same page both %-encoded and in Hebrew letters
+        full = unquote(urljoin(base, href).split("#")[0])
+        if _host(full) != _host(base) or full.rstrip("/") == unquote(base).rstrip("/"):
+            continue
+        hay = f"{full} {a.get_text(' ', strip=True)}".lower()
+        bucket = (contact if any(k in hay for k in _CONTACT_HINTS)
+                  else about if any(k in hay for k in _ABOUT_HINTS) else None)
+        if bucket is not None and full not in contact and full not in about:
+            bucket.append(full)
+    return contact + about
+
+
+async def _get_soup(c: httpx.AsyncClient, url: str) -> tuple[str, BeautifulSoup | None]:
+    r = await c.get(url, headers={"User-Agent": UA})
+    if r.status_code >= 400 or "text/html" not in r.headers.get("content-type", ""):
+        return str(r.url), None
+    return str(r.url), BeautifulSoup(r.text, "lxml")
+
+
+async def _scrape_site(url: str) -> dict:
+    """
+    Emails and WhatsApp numbers from a business's site.
+    Returns {"emails": {email: {"landing": bool, "mailto": bool}}, "whatsapp": [digits]}.
+    "landing" marks emails on the exact page Maps linked — often a branch page
+    of a franchise, where the branch's own address beats the head office's.
+    """
+    out: dict = {"emails": {}, "whatsapp": []}
     if not url:
-        return []
+        return out
     if not url.startswith("http"):
         url = f"https://{url}"
-    pages = [url, urljoin(url, "/contact"), urljoin(url, "/about")]
-    found: set[str] = set()
+    if _host(url).endswith(_NO_SCRAPE_HOSTS):
+        return out
+
     async with httpx.AsyncClient(timeout=10, follow_redirects=True) as c:
-        for page in pages:
+        # Maps often lists a bare http:// URL for a site that only serves https.
+        other = url.replace("http://", "https://", 1) if url.startswith("http://") else None
+        base, soup = url, None
+        for candidate in filter(None, (url, other)):
             try:
-                r = await c.get(page, headers={"User-Agent": UA})
-                if "text/html" not in r.headers.get("content-type", ""):
-                    continue
-                soup = BeautifulSoup(r.text, "lxml")
-                for a in soup.find_all("a", href=True):
-                    if a["href"].startswith("mailto:"):
-                        e = a["href"].replace("mailto:", "").split("?")[0].strip().lower()
-                        cleaned = _clean_email(e)
-                        if cleaned:
-                            found.add(cleaned)
-                # separator=" " is critical: without it, BeautifulSoup joins
-                # text from adjacent elements with NO space (e.g. a phone
-                # number span right before an email span), so the email
-                # regex below would otherwise capture "2105551234info@x.com"
-                # or "info@x.comVisitOurOffice" as one glued string.
-                for m in EMAIL_RE.finditer(soup.get_text(separator=" ")):
-                    cleaned = _clean_email(m.group())
-                    if cleaned:
-                        found.add(cleaned)
-            except Exception:
-                pass
-    return [e for e in found if "@" in e and not e.endswith((".png", ".jpg", ".css"))]
+                base, soup = await _get_soup(c, candidate)
+                break
+            except httpx.HTTPError:
+                continue
+        if soup is None:
+            return out
+        _collect(soup, out, landing=True)
+
+        pages = _contact_links(soup, base) or [urljoin(base, "/contact"), urljoin(base, "/about")]
+        for page in pages[:_MAX_EXTRA_PAGES]:
+            try:
+                _, s = await _get_soup(c, page)
+            except httpx.HTTPError:
+                continue
+            if s is not None:
+                _collect(s, out, landing=False)
+    return out
 
 
 # ── Layer 3: RapidAPI Email Finder ────────────────────────────────────────────
@@ -139,13 +247,31 @@ async def _rapidapi_email_finder(domain: str, company: str) -> list[dict]:
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
-def _email_score(email: str, position: str = "") -> int:
+def _email_score(email: str, position: str = "", landing: bool = False,
+                 mailto: bool = False, city: str = "") -> int:
     pfx = email.split("@")[0].lower()
     s = 50
     if any(k in pfx      for k in DECISION_KWS): s += 30
     if any(k in position.lower() for k in DECISION_KWS): s += 20
     if pfx in GENERIC_PFX: s -= 30
+    if pfx in NON_SALES_PFX: s -= 40
+    # A franchise branch page lists the branch's address next to the head
+    # office's footer ones — prefer the branch (matches the city / the page Maps linked).
+    if city and city in pfx: s += 20
+    if landing: s += 10
+    if mailto:  s += 5
     return max(0, min(100, s))
+
+
+def _intl_whatsapp(digits: str, country: str) -> str:
+    code = _CALLING_CODES.get(country, "")
+    if code and digits.startswith("0"):
+        return code + digits[1:]
+    # Sites often write the code and keep the trunk 0: wa.me/9720501234567
+    for c in set(_CALLING_CODES.values()):
+        if digits.startswith(c + "0") and len(digits) > len(c) + 9:
+            return c + digits[len(c) + 1:]
+    return digits
 
 
 def _domain(website: str) -> str:
@@ -159,11 +285,7 @@ def _domain(website: str) -> str:
         return ""
 
 
-async def _enrich_one(biz: dict) -> dict:
-    # Layer 0: already have email from RapidAPI maps response
-    if biz.get("primary_email") and biz.get("source") != "demo":
-        return {**biz, "enriched": True}
-
+async def _enrich_one(biz: dict, city: str = "", country: str = "") -> dict:
     # Demo records already have emails
     if biz.get("source") == "demo" and biz.get("primary_email"):
         return biz
@@ -172,11 +294,17 @@ async def _enrich_one(biz: dict) -> dict:
     domain = _domain(site)
     pool: list[dict] = []
 
-    # Layer 1: website scrape (free)
-    if site:
-        raw = await _scrape_site(site)
-        for e in raw:
-            pool.append({"value": e, "position": "", "confidence": 60, "src": "scrape"})
+    # Layer 1: website scrape (free) — run even when RapidAPI already gave an
+    # email, since it's also the only source of WhatsApp numbers.
+    scraped = await _scrape_site(site) if site else {"emails": {}, "whatsapp": []}
+    whatsapp = _intl_whatsapp(scraped["whatsapp"][0], country) if scraped["whatsapp"] else ""
+
+    # Layer 0: already have email from RapidAPI maps response
+    if biz.get("primary_email"):
+        return {**biz, "whatsapp": whatsapp, "enriched": True}
+
+    for e, seen in scraped["emails"].items():
+        pool.append({"value": e, "position": "", "confidence": 60, "src": "scrape", **seen})
 
     # Layer 2: RapidAPI email finder (free tier)
     if not pool and domain:
@@ -185,9 +313,11 @@ async def _enrich_one(biz: dict) -> dict:
             pool.append({**r, "src": "rapidapi_email_finder"})
 
     if not pool:
-        return {**biz, "enriched": False}
+        return {**biz, "whatsapp": whatsapp, "enriched": bool(whatsapp)}
 
-    scored = sorted(pool, key=lambda e: _email_score(e["value"], e.get("position", "")), reverse=True)
+    scored = sorted(pool, key=lambda e: _email_score(
+        e["value"], e.get("position", ""), e.get("landing", False), e.get("mailto", False), city,
+    ), reverse=True)
     best   = scored[0]
     owner  = f"{best.get('first_name','')} {best.get('last_name','')}".strip()
 
@@ -197,18 +327,19 @@ async def _enrich_one(biz: dict) -> dict:
         "primary_email":  best["value"],
         "owner_name":     owner or biz.get("owner_name", ""),
         "owner_position": best.get("position", ""),
+        "whatsapp":       whatsapp,
         "enriched":       True,
     }
 
 
-async def _run_all(businesses: list[dict]) -> tuple[list[dict], list[str]]:
+async def _run_all(businesses: list[dict], city: str = "", country: str = "") -> tuple[list[dict], list[str]]:
     sem = asyncio.Semaphore(10)
     errors: list[str] = []
 
     async def safe(b: dict) -> dict:
         async with sem:
             try:
-                return await _enrich_one(b)
+                return await _enrich_one(b, city, country)
             except Exception as e:
                 errors.append(f"{b.get('name','?')}: {e}")
                 return b
@@ -221,11 +352,20 @@ def enrich_websites_node(state: LeadState) -> LeadState:
     businesses = state.get("raw_businesses", [])
     logger.info(f"[enricher] {len(businesses)} businesses to enrich")
 
-    enriched, errors = asyncio.run(_run_all(businesses))
-    with_email = [b for b in enriched if b.get("primary_email")]
+    # "Nahariya, Israel" → "nahariya", matched against email prefixes like nahariya@brand.co.il
+    city = re.sub(r"[^a-z]", "", state.get("location", "").split(",")[0].lower())
+    country = state.get("country_code", "")
+    enriched, errors = asyncio.run(_run_all(businesses, city, country))
+    reachable = [b for b in enriched
+                 if b.get("primary_email") or b.get("phone") or b.get("whatsapp")]
+    # Email first, then WhatsApp, then phone-only — the cap below keeps the best.
+    reachable.sort(key=lambda b: (not b.get("primary_email"), not b.get("whatsapp")))
 
-    logger.info(f"[enricher] {len(with_email)}/{len(enriched)} got email")
-    # Cap here, not at scrape time: businesses without an email are dropped above,
+    n_email = sum(1 for b in reachable if b.get("primary_email"))
+    n_wa    = sum(1 for b in reachable if b.get("whatsapp"))
+    logger.info(f"[enricher] {len(reachable)}/{len(enriched)} reachable — "
+                f"{n_email} with email, {n_wa} with WhatsApp")
+    # Cap here, not at scrape time: unreachable businesses are dropped above,
     # and everything downstream (email verification) costs an API call per lead.
-    with_email = with_email[:state.get("max_results", 100)]
-    return {**state, "enriched_leads": with_email, "enrichment_errors": errors}
+    reachable = reachable[:state.get("max_results", 100)]
+    return {**state, "enriched_leads": reachable, "enrichment_errors": errors}

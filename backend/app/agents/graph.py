@@ -60,7 +60,10 @@ def route_after_enrich(state: LeadState) -> str:
 
 
 def route_after_verify(state: LeadState) -> str:
-    usable = [l for l in state.get("verified_leads", []) if l.get("email_valid")]
+    # Phone/WhatsApp-only leads are usable too — re-running verification
+    # can't give them an email, so don't loop on them.
+    usable = [l for l in state.get("verified_leads", [])
+              if l.get("email_valid") or l.get("phone") or l.get("whatsapp")]
     if usable:
         return "score"
     retries_left = state["retry_count"] < state["max_retries"]

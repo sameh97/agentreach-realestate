@@ -13,6 +13,7 @@ replicas) consistent, and every finished search stays in the user's history.
 """
 import os, json, asyncio, logging
 from datetime import datetime, timedelta, timezone
+from urllib.parse import quote
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from fastapi.responses import Response, StreamingResponse
@@ -34,7 +35,7 @@ MAX_RESULTS_CAP = int(os.getenv("MAX_RESULTS_CAP", "500"))
 DAILY_SEARCH_LIMIT = int(os.getenv("DAILY_SEARCH_LIMIT", "0"))
 
 # Fields included in the lead preview sent with the score_leads event
-_PREVIEW_FIELDS = ("name", "primary_email", "score", "team_size", "specializations")
+_PREVIEW_FIELDS = ("name", "primary_email", "phone", "whatsapp", "score", "team_size", "specializations")
 
 
 class GenerateRequest(BaseModel):
@@ -142,8 +143,11 @@ async def _run_job(search_id, req: GenerateRequest):
                     await push("scrape_maps", message=msg, count=n)
 
                 elif node_name == "enrich_websites":
-                    n = len(s.get("enriched_leads", []))
-                    await push("enrich_websites", message=f"Enriched {n} businesses with emails", count=n)
+                    el = s.get("enriched_leads", [])
+                    n, n_email = len(el), sum(1 for l in el if l.get("primary_email"))
+                    await push("enrich_websites",
+                               message=f"{n} reachable leads — {n_email} with email",
+                               count=n, with_email=n_email)
 
                 elif node_name == "enrich_re_signals":
                     el = s.get("enriched_leads", [])
@@ -153,7 +157,7 @@ async def _run_job(search_id, req: GenerateRequest):
                                count=len(el), brokerages=brokerages)
 
                 elif node_name == "verify_emails":
-                    vl = s.get("verified_leads", [])
+                    vl = [l for l in s.get("verified_leads", []) if l.get("primary_email")]
                     ok = sum(1 for l in vl if l.get("email_valid"))
                     await push("verify_emails",
                                message=f"Verified {ok}/{len(vl)} emails as deliverable",
@@ -199,7 +203,7 @@ async def _run_job(search_id, req: GenerateRequest):
                        "high_quality_count": sum(1 for l in leads if l.get("score", 0) >= 70),
                        "verified_count":     sum(1 for l in leads if l.get("email_verified")),
                    },
-                   message=f"{count} verified leads ready!",
+                   message=f"{count} leads ready!",
                    lead_count=count,
                    csv_url=f"/api/leads/download/{job_id}?format=csv",
                    xlsx_url=f"/api/leads/download/{job_id}?format=xlsx")
@@ -310,5 +314,8 @@ async def download(job_id: str, format: str = "csv", user: dict = Depends(curren
         name = export_filename(doc.get("location", ""), created, "csv")
         media = "text/csv"
 
-    return Response(body, media_type=media,
-                    headers={"Content-Disposition": f'attachment; filename="{name}"'})
+    # Header values must be latin-1, and the name carries the location (often
+    # Hebrew/Arabic): send an ASCII fallback plus the real name RFC 5987-encoded.
+    ascii_name = name.encode("ascii", "ignore").decode() or f"agentreach.{format}"
+    disposition = f'attachment; filename="{ascii_name}"; filename*=UTF-8\'\'{quote(name)}'
+    return Response(body, media_type=media, headers={"Content-Disposition": disposition})

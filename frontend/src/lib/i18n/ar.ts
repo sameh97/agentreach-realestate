@@ -85,8 +85,8 @@ export const ar: Dict = {
   'history.leads_one':     'العملاء: 1',
   'history.high':          'عالي الجودة: {n}',
 
-  'results.titleDone':     'عملاء محتملون موثَّقون: {n}',
-  'results.titleDone_one': 'عملاء محتملون موثَّقون: 1',
+  'results.titleDone':     'العملاء المحتملون: {n}',
+  'results.titleDone_one': 'العملاء المحتملون: 1',
   'results.titleFailed':   'فشل البحث',
   'results.titleRunning':  'جارٍ المعالجة…',
   'results.metaFailed':    'جرّب استعلامًا آخر أو حاول لاحقًا',
@@ -107,6 +107,7 @@ export const ar: Dict = {
   'table.years':  'الخبرة',
   'table.phone':  'الهاتف',
   'table.yearsShort': '{n} سنة',
+  'table.whatsapp':   'فتح محادثة واتساب',
 
   'verify.valid':    '✓ صالح',
   'verify.catchall': '~ يقبل الكل',
@@ -156,7 +157,7 @@ export const ar: Dict = {
   'node.deliver':           'تجهيز الملفات',
   'detail.parsed':      '📍 {location}',
   'detail.businesses':  'النتائج: {n}',
-  'detail.withEmail':   'مع بريد: {n}',
+  'detail.reachable':   'العملاء: {n} · مع بريد: {e}',
   'detail.brokerages':  'مكاتب عقارات: {n}',
   'detail.valid':       'صالح: {v}/{t}',
   'detail.highQuality': 'عالي الجودة: {n}',

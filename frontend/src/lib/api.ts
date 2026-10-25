@@ -59,6 +59,7 @@ export interface PipelineEvent {
   location?:      string
   radius_km?:     number
   brokerages?:    number
+  with_email?:    number
   csv_url?:       string
   xlsx_url?:      string
   lead_count?:    number
@@ -172,7 +173,10 @@ export function startJob(query: string, maxResults = 100) {
 export async function downloadSearch(id: string, format: 'csv' | 'xlsx') {
   const res  = await apiFetch(`/api/leads/download/${id}?format=${format}`)
   const blob = await res.blob()
-  const name = res.headers.get('Content-Disposition')?.match(/filename="?([^"]+)"?/)?.[1]
+  const cd = res.headers.get('Content-Disposition') ?? ''
+  // Prefer the RFC 5987 UTF-8 name (keeps Hebrew/Arabic locations) over the ASCII fallback
+  const utf8 = cd.match(/filename\*=UTF-8''([^;]+)/i)?.[1]
+  const name = utf8 ? decodeURIComponent(utf8) : cd.match(/filename="?([^"]+)"?/)?.[1]
     ?? `agentreach_leads.${format}`
 
   const url = URL.createObjectURL(blob)
