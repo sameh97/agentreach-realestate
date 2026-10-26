@@ -7,6 +7,12 @@
 #   mongo     — MongoDB 7            (127.0.0.1:27017, profile "local-db")
 #   backend   — FastAPI + LangGraph  (port 8000)
 #   frontend  — Next.js 14           (port 3000)
+#   gmaps-scraper — gosom/google-maps-scraper (127.0.0.1:8080, profile "gmaps")
+#
+# Maps source — local scraper vs. paid APIs:
+#   With the "gmaps" profile and GMAPS_SCRAPER_URL set, searches scrape Google
+#   Maps directly (free, no quota, needs ~1 GB RAM for headless Chrome). Without
+#   it — and on Render — RapidAPI / SearchApi are used.
 #
 # Database — local container vs. MongoDB Atlas:
 #   Local (default):  .env has COMPOSE_PROFILES=local-db and no MONGO_URI
@@ -74,6 +80,7 @@ services:
 
       RAPIDAPI_KEY:          ${RAPIDAPI_KEY}
       SEARCHAPI_KEY:         ${SEARCHAPI_KEY:-}
+      GMAPS_SCRAPER_URL:     ${GMAPS_SCRAPER_URL:-}
 
       # Database — defaults to the local mongo container; set
       # MONGO_URI in .env to point at MongoDB Atlas instead
@@ -117,6 +124,29 @@ services:
         limits:
           memory: 1g
           cpus:   "1.0"
+
+
+  # ── Google Maps scraper (local only) ───────────────────────
+  # Self-hosted, quota-free Maps source. Web UI/API on 127.0.0.1:8080
+  # (API docs at /api/docs). Enable with COMPOSE_PROFILES=local-db,gmaps
+  # and GMAPS_SCRAPER_URL=http://gmaps-scraper:8080 in .env.
+  gmaps-scraper:
+    image: gosom/google-maps-scraper:v1.18.1
+    container_name: agentreach-gmaps-scraper
+    restart: unless-stopped
+    profiles: ["gmaps"]
+    command: ["-web", "-data-folder", "/gmapsdata"]
+    ports:
+      - "127.0.0.1:8080:8080"
+    volumes:
+      - gmaps_data:/gmapsdata
+    networks:
+      - agentreach_net
+    deploy:
+      resources:
+        limits:
+          memory: 2g
+          cpus:   "2.0"
 
 
   # ── Frontend ───────────────────────────────────────────────
@@ -173,4 +203,6 @@ volumes:
   leads_output:
     driver: local
   mongo_data:
+    driver: local
+  gmaps_data:
     driver: local

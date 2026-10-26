@@ -27,6 +27,7 @@ scores them, and exports CSV.
   messages — add a pattern there when adding a new `HTTPException` message.
 
 ## Running
+- Local `.env` uses `COMPOSE_PROFILES=local-db,gmaps` + `GMAPS_SCRAPER_URL=http://gmaps-scraper:8080`.
 - `make up` / `make down` / `make logs-back` / `make shell-db` — everything runs in Docker.
 - Backend :8000 (docs at `/docs`), frontend :3000, local mongo on 127.0.0.1:27017.
 - Local DB = `COMPOSE_PROFILES=local-db`. Atlas = set `MONGO_URI` and drop that profile.
@@ -55,6 +56,13 @@ is pinned to 0.2.1, the last version compatible with `langchain-core==0.3.16`.
 With no/invalid key the parser falls back to a regex parser, so searches still work.
 
 ## Maps scraping
+**Local only:** when `GMAPS_SCRAPER_URL` is set (compose profile `gmaps`, service
+`gmaps-scraper` = `gosom/google-maps-scraper:v1.18.1`, UI/API on 127.0.0.1:8080), it's tried
+first — free, no quota, ~1.5 min per search. One job covers both terms (`depth` ≈ 20 places
+per term); its `email` option stays off because `enricher.py` finds the same emails faster.
+Its JSON keys are capitalized (`Status`); `max_time` is seconds. Any failure/empty result
+falls through to the APIs. Render doesn't run it (headless Chrome won't fit the free plan).
+
 `maps_scraper.py`: RapidAPI Local Business Data is primary (emails come back under
 `emails_and_contacts.emails`); per search term it falls back to SearchApi.io on any error.
 A 429 that survives the backoff retry pauses RapidAPI (until `X-RateLimit-Requests-Reset`,

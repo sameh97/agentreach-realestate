@@ -1,7 +1,11 @@
 """
 Node 2 — Maps Scraper (Real Estate vertical — locked)
 ======================================================
-Primary:  RapidAPI "Local Business Data" (OpenWeb Ninja) — 100 free req/month
+Local-only primary: self-hosted gosom/google-maps-scraper, when GMAPS_SCRAPER_URL
+            is set (docker compose profile "gmaps"). Free and quota-less, but it
+            runs a headless Chrome, so it isn't deployed on Render's free plan —
+            production goes straight to the APIs below.
+Primary:  RapidAPI "Local Business Data" (OpenWeb Ninja) — 500 free businesses/month
 Fallback 1: SearchApi.io "google_maps" engine — separate account/quota,
             used per-term if the primary call fails (e.g. 429).
 Fallback 2: Demo data — only if BOTH the above are unavailable/fail.
@@ -28,7 +32,7 @@ fine, enricher.py already scrapes each business's website as a free
 fallback for email discovery regardless of which source found the
 business in the first place.
 """
-import os, logging, asyncio, time
+import os, csv, io, math, logging, asyncio, time
 import httpx
 from app.agents.state import LeadState
 
@@ -37,6 +41,14 @@ logger = logging.getLogger(__name__)
 RAPIDAPI_KEY  = os.getenv("RAPIDAPI_KEY", "")
 SEARCHAPI_KEY = os.getenv("SEARCHAPI_KEY", "")
 _SEARCHAPI_URL = "https://www.searchapi.io/api/v1/search"
+GMAPS_SCRAPER_URL = os.getenv("GMAPS_SCRAPER_URL", "").rstrip("/")
+
+# gosom job limits. A scroll "depth" of 1 yields ~20 places per keyword. Email
+# extraction is left to enricher.py, which already scrapes every site (and also
+# finds WhatsApp numbers and branch emails) — doing it here too doubles the time.
+_GMAPS_MAX_DEPTH     = 5
+_GMAPS_MAX_TIME_SEC  = 240
+_GMAPS_POLL_SEC      = 3.0
 
 # Two searches per location so we catch both solo agents (usually tagged
 # "Real estate agent" on Maps) and firms (usually tagged "Real estate agency").
@@ -208,6 +220,79 @@ def _normalize_searchapi(r: dict) -> dict:
     }
 
 
+async def _search_gmaps_scraper(location: str, limit: int) -> list[dict]:
+    """
+    Self-hosted gosom/google-maps-scraper (REST API of its -web mode):
+    POST /api/v1/jobs → poll GET /api/v1/jobs/{id} → GET .../download (CSV).
+    One job covers every search term. Its JSON keys are capitalized ("Status").
+    """
+    depth = min(_GMAPS_MAX_DEPTH, max(1, math.ceil(limit / 20 / len(_SEARCH_TERMS))))
+    job = {
+        "name":     f"agentreach {location}"[:60],
+        "keywords": [f"{term} in {location}" for term in _SEARCH_TERMS],
+        "lang":     "en",
+        "depth":    depth,
+        "email":    False,
+        "max_time": _GMAPS_MAX_TIME_SEC,
+    }
+    async with httpx.AsyncClient(base_url=GMAPS_SCRAPER_URL, timeout=30) as c:
+        r = await c.post("/api/v1/jobs", json=job)
+        r.raise_for_status()
+        job_id = r.json()["id"]
+        try:
+            deadline = time.monotonic() + _GMAPS_MAX_TIME_SEC + 60
+            status = ""
+            while time.monotonic() < deadline:
+                await asyncio.sleep(_GMAPS_POLL_SEC)
+                status = str((await c.get(f"/api/v1/jobs/{job_id}")).json().get("Status", "")).lower()
+                if status not in ("pending", "working"):
+                    break
+            if status in ("pending", "working"):
+                raise TimeoutError(f"gmaps-scraper job still '{status}' after {_GMAPS_MAX_TIME_SEC}s")
+            if status == "failed":
+                raise RuntimeError("gmaps-scraper job failed")
+            r = await c.get(f"/api/v1/jobs/{job_id}/download")
+            r.raise_for_status()
+        finally:
+            # Jobs pile up in its data folder otherwise
+            try:
+                await c.delete(f"/api/v1/jobs/{job_id}")
+            except httpx.HTTPError:
+                pass
+
+    rows = list(csv.DictReader(io.StringIO(r.content.decode("utf-8-sig"))))
+    logger.info(f"[maps_scraper] (gmaps-scraper) {len(rows)} places, depth={depth}")
+    return [_normalize_gmaps(row) for row in rows]
+
+
+def _num(v, cast):
+    try:
+        return cast(v)
+    except (TypeError, ValueError):
+        return cast(0)
+
+
+def _normalize_gmaps(r: dict) -> dict:
+    """Normalize a gosom/google-maps-scraper CSV row to our schema."""
+    emails = [e.strip() for e in (r.get("emails") or "").split(",") if "@" in e]
+    return {
+        **_normalize_searchapi({}),
+        "name":          str(r.get("title") or ""),
+        "address":       str(r.get("address") or ""),
+        "phone":         str(r.get("phone") or ""),
+        "website":       str(r.get("website") or ""),
+        "rating":        _num(r.get("review_rating"), float),
+        "review_count":  _num(r.get("review_count"), int),
+        "latitude":      _num(r.get("latitude"), float) or None,
+        "longitude":     _num(r.get("longitude"), float) or None,
+        "category":      str(r.get("category") or ""),
+        "source":        "gmaps_scraper",
+        "emails":        emails,
+        "primary_email": emails[0] if emails else "",
+        "enriched":      bool(emails),
+    }
+
+
 async def _search_all_terms(location: str, limit: int, region: str = "") -> list[dict]:
     """
     Run each search term one at a time (not concurrently), with a small
@@ -217,6 +302,16 @@ async def _search_all_terms(location: str, limit: int, region: str = "") -> list
     to SearchApi.io, so a block on one provider no longer drops results.
     """
     global _rapidapi_blocked_until
+
+    if GMAPS_SCRAPER_URL:
+        try:
+            results = await _search_gmaps_scraper(location, limit)
+            if results:
+                return results
+            logger.warning("[maps_scraper] gmaps-scraper found nothing — falling back to the APIs")
+        except Exception as e:
+            logger.warning(f"[maps_scraper] gmaps-scraper failed ({e!r}) — falling back to the APIs")
+
     per_term_limit = max(20, limit // len(_SEARCH_TERMS))
     merged: list[dict] = []
 
@@ -393,10 +488,10 @@ def scrape_maps_node(state: LeadState) -> LeadState:
         )
 
     try:
-        if RAPIDAPI_KEY or SEARCHAPI_KEY:
+        if GMAPS_SCRAPER_URL or RAPIDAPI_KEY or SEARCHAPI_KEY:
             businesses = asyncio.run(_search_all_terms(loc, lim, state.get("country_code", "")))
         else:
-            logger.warning("[maps_scraper] No RAPIDAPI_KEY or SEARCHAPI_KEY — using demo data")
+            logger.warning("[maps_scraper] No GMAPS_SCRAPER_URL, RAPIDAPI_KEY or SEARCHAPI_KEY — using demo data")
             businesses = _demo_records(loc)
     except Exception as e:
         errors.append(str(e))
