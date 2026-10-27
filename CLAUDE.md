@@ -71,6 +71,21 @@ Quota (free plans): RapidAPI counts **businesses returned** — 500/month (heade
 `x-ratelimit-businesses-remaining`), not the 500k requests. SearchApi has one-time credits
 (1 per term, ~20 results). Don't probe with large `limit`s.
 
+## Lead cache (`backend/app/cache.py`)
+Sync pymongo (nodes run in a worker thread). `maps_cache` = Maps results per
+`country|location` (14 d, reused only if fetched with a limit ≥ the new one); `places` =
+per business (`place_id`, else name|phone) with groups `contact`/`signals` (45 d) and
+`verify` (30 d, only for the same email; unknown/error results aren't cached). Blocked or
+captcha'd site scrapes (`_scrape_failed`) aren't cached, so they retry. A repeat city search
+runs in ~10 s with no Google/site/verify calls. Cache errors are logged and ignored.
+To force fresh data, delete the docs: `db.maps_cache.deleteOne({_id: "il|nahariya, israel"})`.
+
+## Email verification (`email_verifier.py`)
+Verify Email Pro = **200 checks/month** on BASIC, ~1 req/s. The asyncio lock is created per
+run (`_run_all`) — a module-level one broke every search after the first ("error" status).
+Undeliverable emails (`_UNDELIVERABLE`) are cleared and the lead kept if it has a phone/WhatsApp.
+UI/CSV show only **Valid** (verified or catch-all) / **Not verified** (check didn't run).
+
 ## Enrichment (`enricher.py`)
 - A lead is kept if it has an email **or** phone **or** WhatsApp (most Israeli agents publish
   no email). Sort is email → WhatsApp → phone before the `max_results` cap.

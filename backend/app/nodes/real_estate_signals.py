@@ -35,6 +35,7 @@ import httpx
 from bs4 import BeautifulSoup
 
 from app.agents.state import LeadState
+from app import cache
 
 logger = logging.getLogger(__name__)
 
@@ -205,7 +206,15 @@ def enrich_real_estate_signals_node(state: LeadState) -> LeadState:
     leads = state.get("enriched_leads", [])
     logger.info(f"[re_signals] scanning {len(leads)} sites for real-estate signals")
 
-    enriched, errors = asyncio.run(_run_all(leads))
+    places = cache.get_places(leads)
+    hits, todo = [], []
+    for l in leads:
+        signals = cache.cached_group(places.get(cache.place_key(l)), "signals", cache.PLACE_TTL)
+        (hits if signals is not None else todo).append({**l, **signals} if signals else l)
+
+    fresh, errors = asyncio.run(_run_all(todo))
+    cache.save_group(fresh, "signals", cache.SIGNAL_FIELDS)
+    enriched = hits + fresh
 
     brokerages = sum(1 for l in enriched if l.get("team_size") == "brokerage")
     with_specialization = sum(1 for l in enriched if l.get("specializations"))

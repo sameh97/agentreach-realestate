@@ -21,28 +21,33 @@ function ScorePill({ score }: { score: number }) {
   )
 }
 
-// email_status values the verifier sends that have a translation
-const VERIFY_STATUS_KEYS = new Set(['unknown', 'invalid', 'disposable', 'no_mx', 'bad_syntax', 'no_email', 'error', 'spam_trap', 'abuse'])
+// Collapses the verifier's statuses into what the user acts on. Catch-all servers
+// accept any address (mail doesn't bounce), so they count as valid; anything
+// undeliverable was already removed by the backend.
+function isValidEmail(lead: Lead) {
+  return lead.email_verified || lead.email_catchall || lead.email_status === 'valid'
+}
 
-function VerifyBadge({ lead }: { lead: Lead }) {
+function EmailCell({ lead }: { lead: Lead }) {
   const t = useT()
-  const cls = lead.email_verified
-    ? 'bg-[rgba(0,230,118,0.1)] text-[#00e676]'
-    : lead.email_catchall
-    ? 'bg-[rgba(255,179,0,0.1)] text-[#ffb300]'
-    : 'bg-[rgba(107,124,143,0.15)] text-[#6b7c8f]'
-
-  const label = lead.email_verified
-    ? t('verify.valid')
-    : lead.email_catchall
-    ? t('verify.catchall')
-    : VERIFY_STATUS_KEYS.has(lead.email_status) ? t(`verify.${lead.email_status}` as TKey)
-    : lead.email_status || t('verify.unknown')
-
+  if (!lead.primary_email) return <span className="text-[11px] text-[var(--muted)]">—</span>
+  const valid = isValidEmail(lead)
   return (
-    <span className={clsx('inline-flex items-center gap-1 text-[10px] font-bold font-mono px-2 py-[2px] rounded', cls)}>
-      {label}
-    </span>
+    <div className="min-w-0">
+      <a
+        href={`mailto:${lead.primary_email}`}
+        className="font-mono text-[12px] text-[var(--accent)] truncate block max-w-[220px] hover:underline"
+        dir="ltr"
+      >
+        {lead.primary_email}
+      </a>
+      <span className={clsx(
+        'inline-flex mt-[3px] text-[10px] font-bold font-mono px-2 py-[1px] rounded',
+        valid ? 'bg-[rgba(0,230,118,0.1)] text-[#00e676]' : 'bg-[rgba(107,124,143,0.15)] text-[#6b7c8f]',
+      )}>
+        {t(valid ? 'verify.valid' : 'verify.unverified')}
+      </span>
+    </div>
   )
 }
 
@@ -51,12 +56,14 @@ const TEAM_COLORS: Record<string, string> = {
   large_team:  'bg-[rgba(0,212,255,0.12)]  text-[var(--accent)]',
   small_team:  'bg-[rgba(0,230,118,0.10)]  text-[#00e676]',
   solo:        'bg-[rgba(107,124,143,0.15)] text-[#6b7c8f]',
-  unknown:     'bg-[rgba(107,124,143,0.1)]  text-[var(--muted)]',
 }
 
 function TeamBadge({ lead }: { lead: Lead }) {
   const t = useT()
-  const key = (lead.team_size in TEAM_COLORS ? lead.team_size : 'unknown') as string
+  const key = lead.team_size
+  if (!key || !(key in TEAM_COLORS) || key === 'unknown') {
+    return <span className="text-[11px] text-[var(--muted)]">—</span>
+  }
   return (
     <span className={clsx('inline-flex items-center text-[10px] font-bold font-mono px-2 py-[2px] rounded', TEAM_COLORS[key])}>
       {t(`team.${key}` as TKey)}
@@ -86,13 +93,17 @@ function SpecializationTags({ specializations }: { specializations: string[] }) 
 const COLS = [
   { key: 'score',  w: '70px'  },
   { key: 'name',   w: 'auto'  },
-  { key: 'email',  w: '210px' },
-  { key: 'status', w: '100px' },
-  { key: 'team',   w: '110px' },
-  { key: 'specs',  w: '190px' },
-  { key: 'years',  w: '70px'  },
+  { key: 'email',  w: '230px' },
   { key: 'phone',  w: '140px' },
+  { key: 'team',   w: '110px' },
+  { key: 'specs',  w: '170px' },
+  { key: 'rating', w: '90px'  },
 ] as const
+
+function websiteLabel(url: string) {
+  try { return new URL(url.startsWith('http') ? url : `https://${url}`).hostname.replace(/^www\./, '') }
+  catch { return url }
+}
 
 const SPEC_KEYS = new Set(['luxury', 'commercial', 'new_construction', 'relocation', 'first_time_buyer',
                            'waterfront', 'land', 'vacation_rental', 'senior_55plus'])
@@ -137,6 +148,17 @@ export function LeadTable({ leads }: Props) {
                     ? lead.address.split(',').slice(-2).join(',').trim()
                     : '—'}
                 </div>
+                {lead.website && (
+                  <a
+                    href={lead.website.startsWith('http') ? lead.website : `https://${lead.website}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="block text-[11px] text-[var(--accent)] mt-[2px] truncate max-w-[200px] hover:underline"
+                    dir="ltr"
+                  >
+                    {websiteLabel(lead.website)} ↗
+                  </a>
+                )}
                 {lead.owner_name && (
                   <div className="text-[10px] font-mono text-[#b388ff] mt-[2px]">
                     {lead.owner_name}
@@ -145,16 +167,32 @@ export function LeadTable({ leads }: Props) {
                 )}
               </td>
 
-              {/* Email */}
+              {/* Email + validity */}
               <td className="px-4 py-[11px]">
-                <span className="font-mono text-[12px] text-[var(--accent)] truncate block max-w-[200px]" dir="ltr">
-                  {lead.primary_email || '—'}
-                </span>
+                <EmailCell lead={lead} />
               </td>
 
-              {/* Verification status */}
+              {/* Phone + WhatsApp */}
               <td className="px-4 py-[11px]">
-                <VerifyBadge lead={lead} />
+                {lead.phone ? (
+                  <a href={`tel:${lead.phone}`} className="font-mono text-[11px] text-[var(--text)] whitespace-nowrap hover:underline" dir="ltr">
+                    {lead.phone}
+                  </a>
+                ) : (
+                  <span className="text-[11px] text-[var(--muted)]">—</span>
+                )}
+                {lead.whatsapp && (
+                  <a
+                    href={`https://wa.me/${lead.whatsapp}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    title={t('table.whatsapp')}
+                    className="block mt-[2px] text-[10px] font-semibold text-[#25d366] hover:underline"
+                    dir="ltr"
+                  >
+                    WhatsApp ↗
+                  </a>
+                )}
               </td>
 
               {/* Team size */}
@@ -167,29 +205,15 @@ export function LeadTable({ leads }: Props) {
                 <SpecializationTags specializations={lead.specializations} />
               </td>
 
-              {/* Years in business */}
-              <td className="px-4 py-[11px]">
-                <span className="text-[11px] font-mono text-[var(--muted)]">
-                  {lead.years_in_business ? t('table.yearsShort', { n: lead.years_in_business }) : '—'}
-                </span>
-              </td>
-
-              {/* Phone */}
-              <td className="px-4 py-[11px]">
-                <span className="font-mono text-[11px] text-[var(--muted)] whitespace-nowrap" dir="ltr">
-                  {lead.phone || '—'}
-                </span>
-                {lead.whatsapp && (
-                  <a
-                    href={`https://wa.me/${lead.whatsapp}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    title={t('table.whatsapp')}
-                    className="block mt-[2px] text-[10px] font-semibold text-[#25d366] hover:underline"
-                    dir="ltr"
-                  >
-                    WhatsApp ↗
-                  </a>
+              {/* Google rating */}
+              <td className="px-4 py-[11px] whitespace-nowrap">
+                {lead.rating ? (
+                  <span className="text-[11px] font-mono text-[var(--text)]" dir="ltr">
+                    <span className="text-[#ffb300]">★</span> {lead.rating.toFixed(1)}
+                    <span className="text-[var(--muted)]"> ({lead.review_count})</span>
+                  </span>
+                ) : (
+                  <span className="text-[11px] text-[var(--muted)]">—</span>
                 )}
               </td>
             </tr>

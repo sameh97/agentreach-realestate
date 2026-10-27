@@ -137,7 +137,8 @@ async def _run_job(search_id, req: GenerateRequest):
                 elif node_name == "scrape_maps":
                     n = len(s.get("raw_businesses", []))
                     advisories = s.get("scrape_errors", [])
-                    msg = f"Found {n} businesses on Google Maps"
+                    msg = (f"Loaded {n} businesses from cache (searched recently)" if s.get("maps_cached")
+                           else f"Found {n} businesses on Google Maps")
                     if advisories:
                         msg += f" — note: {advisories[0]}"
                     await push("scrape_maps", message=msg, count=n)

@@ -35,6 +35,7 @@ business in the first place.
 import os, csv, io, math, logging, asyncio, time
 import httpx
 from app.agents.state import LeadState
+from app import cache
 
 logger = logging.getLogger(__name__)
 
@@ -196,6 +197,7 @@ def _normalize_searchapi(r: dict) -> dict:
         "longitude":     coords.get("longitude"),
         "category":      str(r.get("type") or ""),
         "source":        "searchapi_google_maps",
+        "place_id":      str(r.get("place_id") or ""),
         # SearchApi doesn't extract emails — enricher.py's website-scrape
         # step fills this in downstream regardless of source.
         "emails":        [],
@@ -287,6 +289,7 @@ def _normalize_gmaps(r: dict) -> dict:
         "longitude":     _num(r.get("longitude"), float) or None,
         "category":      str(r.get("category") or ""),
         "source":        "gmaps_scraper",
+        "place_id":      str(r.get("place_id") or ""),
         "emails":        emails,
         "primary_email": emails[0] if emails else "",
         "enriched":      bool(emails),
@@ -374,6 +377,7 @@ def _normalize(r: dict) -> dict:
         "longitude":     r.get("longitude") or (r.get("coordinates") or {}).get("lng"),
         "category":      category,
         "source":        "rapidapi_local_business",
+        "place_id":      str(r.get("place_id") or ""),
         "emails":        emails,
         "primary_email": str(primary_email),
         "owner_name":    "",
@@ -478,6 +482,12 @@ def scrape_maps_node(state: LeadState) -> LeadState:
     logger.info(f"[maps_scraper] real estate agents & brokerages in '{loc}'")
     errors, businesses = [], []
 
+    country = state.get("country_code", "")
+    cached = cache.get_maps(loc, country, lim)
+    if cached:
+        logger.info(f"[maps_scraper] {len(cached)} businesses from cache — no live search")
+        return {**state, "raw_businesses": cached, "scrape_errors": [], "maps_cached": True}
+
     if _looks_like_country_or_region(loc):
         errors.append(
             f"'{loc}' looks like a whole country/region rather than a city. "
@@ -508,4 +518,5 @@ def scrape_maps_node(state: LeadState) -> LeadState:
             unique.append(b)
 
     logger.info(f"[maps_scraper] {len(unique)} unique records")
-    return {**state, "raw_businesses": unique, "scrape_errors": errors}
+    cache.save_maps(loc, country, lim, unique)
+    return {**state, "raw_businesses": unique, "scrape_errors": errors, "maps_cached": False}
