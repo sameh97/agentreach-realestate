@@ -16,6 +16,7 @@ from urllib.parse import urljoin, urlparse, unquote
 import httpx
 from bs4 import BeautifulSoup
 from app.agents.state import LeadState
+from app import cache
 
 logger = logging.getLogger(__name__)
 
@@ -171,17 +172,22 @@ async def _get_soup(c: httpx.AsyncClient, url: str) -> tuple[str, BeautifulSoup 
     r = await c.get(url, headers={"User-Agent": UA})
     if r.status_code >= 400 or "text/html" not in r.headers.get("content-type", ""):
         return str(r.url), None
+    # Bot-check interstitials (SiteGround answers 202 + a tiny captcha redirect page)
+    if r.status_code == 202 or (len(r.text) < 3000 and "captcha" in r.text.lower()):
+        return str(r.url), None
     return str(r.url), BeautifulSoup(r.text, "lxml")
 
 
 async def _scrape_site(url: str) -> dict:
     """
     Emails and WhatsApp numbers from a business's site.
-    Returns {"emails": {email: {"landing": bool, "mailto": bool}}, "whatsapp": [digits]}.
+    Returns {"emails": {email: {"landing": bool, "mailto": bool}}, "whatsapp": [digits],
+             "failed": bool}  — failed = the site itself couldn't be loaded (down,
+    blocked, captcha), so the empty result shouldn't be cached.
     "landing" marks emails on the exact page Maps linked — often a branch page
     of a franchise, where the branch's own address beats the head office's.
     """
-    out: dict = {"emails": {}, "whatsapp": []}
+    out: dict = {"emails": {}, "whatsapp": [], "failed": False}
     if not url:
         return out
     if not url.startswith("http"):
@@ -200,6 +206,7 @@ async def _scrape_site(url: str) -> dict:
             except httpx.HTTPError:
                 continue
         if soup is None:
+            out["failed"] = True
             return out
         _collect(soup, out, landing=True)
 
@@ -296,12 +303,14 @@ async def _enrich_one(biz: dict, city: str = "", country: str = "") -> dict:
 
     # Layer 1: website scrape (free) — run even when RapidAPI already gave an
     # email, since it's also the only source of WhatsApp numbers.
-    scraped = await _scrape_site(site) if site else {"emails": {}, "whatsapp": []}
+    scraped = await _scrape_site(site) if site else {"emails": {}, "whatsapp": [], "failed": False}
     whatsapp = _intl_whatsapp(scraped["whatsapp"][0], country) if scraped["whatsapp"] else ""
 
     # Layer 0: already have email from RapidAPI maps response
     if biz.get("primary_email"):
         return {**biz, "whatsapp": whatsapp, "enriched": True}
+    if scraped["failed"]:
+        biz = {**biz, "_scrape_failed": True}
 
     for e, seen in scraped["emails"].items():
         pool.append({"value": e, "position": "", "confidence": 60, "src": "scrape", **seen})
@@ -355,7 +364,18 @@ def enrich_websites_node(state: LeadState) -> LeadState:
     # "Nahariya, Israel" → "nahariya", matched against email prefixes like nahariya@brand.co.il
     city = re.sub(r"[^a-z]", "", state.get("location", "").split(",")[0].lower())
     country = state.get("country_code", "")
-    enriched, errors = asyncio.run(_run_all(businesses, city, country))
+    # Businesses scraped within PLACE_TTL reuse their stored contacts — no site visit.
+    places = cache.get_places(businesses)
+    hits, todo = [], []
+    for b in businesses:
+        contact = cache.cached_group(places.get(cache.place_key(b)), "contact", cache.PLACE_TTL)
+        (hits if contact is not None else todo).append({**b, **contact} if contact else b)
+
+    fresh, errors = asyncio.run(_run_all(todo, city, country))
+    cache.save_group([b for b in fresh if not b.pop("_scrape_failed", False)],
+                     "contact", cache.CONTACT_FIELDS)
+    enriched = hits + fresh
+    logger.info(f"[enricher] {len(hits)} from cache, {len(fresh)} scraped")
     reachable = [b for b in enriched
                  if b.get("primary_email") or b.get("phone") or b.get("whatsapp")]
     # Email first, then WhatsApp, then phone-only — the cap below keeps the best.

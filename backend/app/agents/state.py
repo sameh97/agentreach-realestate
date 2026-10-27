@@ -25,6 +25,7 @@ class LeadState(TypedDict):
     # ── Scrape ───────────────────────────────────────────────
     raw_businesses:   list[dict]
     scrape_errors:    list[str]
+    maps_cached:      bool       # raw_businesses came from the lead cache, not a live search
 
     # ── Enrichment ───────────────────────────────────────────
     enriched_leads:   list[dict]

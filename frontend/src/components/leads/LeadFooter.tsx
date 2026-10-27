@@ -10,8 +10,8 @@ export function LeadFooter({ leads }: Props) {
   const high = leads.filter(l => l.score >= 70).length
   const mid  = leads.filter(l => l.score >= 40 && l.score < 70).length
   const low  = leads.filter(l => l.score < 40).length
-  const verified  = leads.filter(l => l.email_verified).length
-  const catchall  = leads.filter(l => l.email_catchall).length
+  const valid     = leads.filter(l => l.primary_email && (l.email_verified || l.email_catchall || l.email_status === 'valid')).length
+  const whatsapp  = leads.filter(l => l.whatsapp).length
 
   return (
     <div className="flex items-center gap-6 px-5 py-3 border-t border-[var(--border)] bg-[var(--panel)] text-[12px] text-[var(--muted)] flex-wrap">
@@ -19,8 +19,8 @@ export function LeadFooter({ leads }: Props) {
       <StatDot color="#ffb300" count={mid}      label={t('footer.medium')} />
       <StatDot color="#ff5252" count={low}      label={t('footer.low')} />
       <div className="w-px h-4 bg-[var(--border)] mx-1" />
-      <StatDot color="#00d4ff" count={verified}  label={t('footer.verified')} />
-      <StatDot color="#ffb300" count={catchall}  label={t('footer.catchall')} />
+      <StatDot color="#00d4ff" count={valid}     label={t('footer.verified')} />
+      <StatDot color="#25d366" count={whatsapp}  label={t('footer.whatsapp')} />
       <div className="ms-auto font-mono text-[11px]">
         {t('footer.total', { n: leads.length })}
       </div>
